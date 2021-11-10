@@ -1,10 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 from setuptools import setup, find_packages
 
 # Parse the version from the main __init__.py
-with open('micasense/__init__.py') as f:
+with open("micasense/__init__.py") as f:
     for line in f:
         if line.find("__version__") >= 0:
             version = line.split("=")[1].strip()
@@ -12,25 +12,27 @@ with open('micasense/__init__.py') as f:
             version = version.strip("'")
             continue
 
-setup(name='micasense',
-      version=version,
-      description=u"Micasense Image Processing",
-      author=u"MicaSense, Inc.",
-      author_email='github@micasense.com',
-      url='https://github.com/micasense/imageprocessing',
-      license='MIT',
-      packages=find_packages(),
-      install_requires=[
-          'requests',
-          'numpy',
-          'opencv-python',
-          'gdal',
-          'pysolar',
-          'matplotlib',
-          'scikit-image',
-          'packaging',
-          'pyexiftool',
-          'pytz',
-          'pyzbar',
-          'tqdm'
-      ])
+setup(
+    name="micasense",
+    version=version,
+    description=u"Micasense Image Processing",
+    author=u"MicaSense, Inc.",
+    author_email="github@micasense.com",
+    url="https://github.com/micasense/imageprocessing",
+    license="MIT",
+    packages=find_packages(),
+    install_requires=[
+        "requests",
+        "numpy",
+        "opencv-python",
+        "gdal",
+        "pysolar",
+        "matplotlib",
+        "scikit-image",
+        "packaging",
+        "pyexiftool",
+        "pytz",
+        "pyzbar",
+        "tqdm",
+    ],
+)

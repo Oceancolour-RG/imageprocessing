@@ -34,5 +34,7 @@ setup(
         "pytz",
         "pyzbar",
         "tqdm",
+        "typing",
+        "pathlib"
     ],
 )

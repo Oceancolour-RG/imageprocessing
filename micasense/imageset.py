@@ -3,8 +3,9 @@
 """
 MicaSense ImageSet Class
 
-    An ImageSet contains a group of Captures. The Captures can be loaded from Image objects, from a list of files,
-    or by recursively searching a directory for images.
+    An ImageSet contains a group of Captures. The Captures can be loaded
+    from Image objects, from a list of files, or by recursively searching
+    a directory for images.
 
 Copyright 2017 MicaSense, Inc.
 
@@ -33,18 +34,12 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import partial
 from pprint import pprint
 
-import exiftool
 from tqdm import tqdm
 
 import micasense.capture as capture
 import micasense.image as image
 
 warnings.simplefilter(action="once")
-
-
-# FIXME: mirrors Capture.append_file(). Not used. Does this still belong here?
-def image_from_file(filename):
-    return image.Image(filename)
 
 
 def parallel_process(
@@ -73,7 +68,8 @@ def parallel_process(
                 "leave": True,
             }
 
-            # Receive Future objects as they complete. Print out the progress as tasks complete
+            # Receive Future objects as they complete.
+            # Print out the progress as tasks complete
             for _ in tqdm(
                 iterable=as_completed(futures), desc="Processing ImageSet", **kwargs
             ):
@@ -100,8 +96,8 @@ def save_capture(params, cap):
             )
         else:
             print(
-                f"\tCapture {cap.uuid} only has {len(cap.images)} Images. Should have {params['capture_len']}. "
-                f"Skipping..."
+                f"\tCapture {cap.uuid} only has {len(cap.images)} Images. Should have "
+                f"{params['capture_len']}. Skipping..."
             )
             return
 
@@ -133,28 +129,24 @@ class ImageSet(object):
         captures.sort()
 
     @classmethod
-    def from_directory(
-        cls, directory, progress_callback=None, use_tqdm=False, exiftool_path=None
-    ):
+    def from_directory(cls, directory, progress_callback=None, use_tqdm=False):
         """
         Create an ImageSet recursively from the files in a directory.
         :param directory: str system file path
         :param progress_callback: function to report progress to
         :param use_tqdm: boolean True to use tqdm progress bar
-        :param exiftool_path: str system file path to exiftool location
         :return: ImageSet instance
         """
 
         # progress_callback deprecation warning
         if progress_callback is not None:
             warnings.warn(
-                message="The progress_callback parameter will be deprecated in favor of use_tqdm",
+                message=(
+                    "The progress_callback parameter will be "
+                    "deprecated in favor of use_tqdm"
+                ),
                 category=PendingDeprecationWarning,
             )
-
-        # ensure exiftoolpath is found per MicaSense setup instructions
-        if exiftool_path is None and os.environ.get("exiftoolpath") is not None:
-            exiftool_path = os.path.normpath(os.environ.get("exiftoolpath"))
 
         cls.basedir = directory
         matches = []
@@ -166,22 +158,21 @@ class ImageSet(object):
 
         images = []
 
-        with exiftool.ExifTool(exiftool_path) as exift:
-            if use_tqdm:  # to use tqdm progress bar instead of progress_callback
-                kwargs = {
-                    "total": len(matches),
-                    "unit": " Files",
-                    "unit_scale": False,
-                    "leave": True,
-                }
-                for path in tqdm(iterable=matches, desc="Loading ImageSet", **kwargs):
-                    images.append(image.Image(path, exiftool_obj=exift))
-            else:
-                print("Loading ImageSet from: {}".format(directory))
-                for i, path in enumerate(matches):
-                    images.append(image.Image(path, exiftool_obj=exift))
-                    if progress_callback is not None:
-                        progress_callback(float(i) / float(len(matches)))
+        if use_tqdm:  # to use tqdm progress bar instead of progress_callback
+            kwargs = {
+                "total": len(matches),
+                "unit": " Files",
+                "unit_scale": False,
+                "leave": True,
+            }
+            for path in tqdm(iterable=matches, desc="Loading ImageSet", **kwargs):
+                images.append(image.Image(image_path=path))
+        else:
+            print("Loading ImageSet from: {}".format(directory))
+            for i, path in enumerate(matches):
+                images.append(image.Image(image_path=path))
+                if progress_callback is not None:
+                    progress_callback(float(i) / float(len(matches)))
 
         # create a dictionary to index the images so we can sort them into captures
         # {
@@ -205,7 +196,9 @@ class ImageSet(object):
 
     def as_nested_lists(self):
         """
-        Get timestamp, latitude, longitude, altitude, capture_id, dls-yaw, dls-pitch, dls-roll, and irradiance from all
+        Get timestamp, latitude, longitude, altitude, capture_id,
+        dls-yaw, dls-pitch, dls-roll, and irradiance from all
+
         Captures.
         :return: List data from all Captures, List column headers.
         """
@@ -258,20 +251,27 @@ class ImageSet(object):
     ):
         """
         Write band stacks and rgb thumbnails to disk.
-        :param warp_matrices: 2d List of warp matrices derived from Capture.get_warp_matrices()
-        :param output_stack_directory: str system file path to output stack directory
-        :param output_rgb_directory: str system file path to output thumbnail directory
-        :param irradiance: List returned from Capture.dls_irradiance() or Capture.panel_irradiance()    <-- TODO: Write a better docstring for this
-        :param img_type: str 'radiance' or 'reflectance'. Desired image output type.
-        :param multiprocess: boolean True to use multiprocessing module
-        :param overwrite: boolean True to overwrite existing files
-        :param progress_callback: function to report progress to
-        :param use_tqdm: boolean True to use tqdm progress bar
+        Parameters
+        ----------
+        warp_matrices: 2d List of warp matrices derived from Capture.get_warp_matrices()
+        output_stack_directory: str system file path to output stack directory
+        output_rgb_directory: str system file path to output thumbnail directory
+        irradiance: List
+            A list returned from Capture.dls_irradiance() or Capture.panel_irradiance()
+            TODO: Write a better docstring for this
+        img_type: str 'radiance' or 'reflectance'. Desired image output type.
+        multiprocess: boolean True to use multiprocessing module
+        overwrite: boolean True to overwrite existing files
+        progress_callback: function to report progress to
+        use_tqdm: boolean True to use tqdm progress bar
         """
 
         if progress_callback is not None:
             warnings.warn(
-                message="The progress_callback parameter will be deprecated in favor of use_tqdm",
+                message=(
+                    "The progress_callback parameter will be "
+                    "deprecated in favor of use_tqdm"
+                ),
                 category=PendingDeprecationWarning,
             )
 
@@ -284,9 +284,7 @@ class ImageSet(object):
             output_stack_directory
         ):
             os.mkdir(output_stack_directory)
-        if output_rgb_directory is not None and not os.path.exists(
-            output_rgb_directory
-        ):
+        if output_rgb_directory is not None and not os.path.exists(output_rgb_directory):
             os.mkdir(output_rgb_directory)
 
         # processing parameters

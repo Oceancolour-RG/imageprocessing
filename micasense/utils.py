@@ -21,36 +21,38 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import cv2
 import numpy as np
+from typing import Tuple
+import micasense.metadata2 as metadata
 
 
-def raw_image_to_radiance(meta, image_raw):
+def raw_image_to_radiance(
+    image_raw: np.ndarray, meta: metadata.MetadataFromExif
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     # get image dimensions
     image_raw = image_raw.T
-    x_dim = image_raw.shape[0]
-    y_dim = image_raw.shape[1]
+    ncols = image_raw.shape[0]
+    nrows = image_raw.shape[1]
+
+    if not meta.supports_radiometric_calibration():
+        raise Exception(
+            "Radiometric calibration factors not present in metadata. "
+            "Cannot Convert to Radiance."
+        )
 
     #  get radiometric calibration factors
-
-    # radiometric sensitivity
-    a1, a2, a3 = meta.get_item("XMP:RadiometricCalibration")
-    a1 = float(a1)
-    a2 = float(a2)
-    a3 = float(a3)
+    a1, a2, a3 = meta.radiometric_cal()
 
     # get dark current pixel values
-    # get number of stored values
-    black_levels = [float(val) for val in meta.get_item("EXIF:BlackLevel").split(" ")]
-    # blacklevel = np.array(black_levels)
-    darklevel = np.array(black_levels).mean()
+    darklevel = meta.black_level()
 
     # get exposure time & gain (gain = ISO/100)
-    exposure_time = float(meta.get_item("EXIF:ExposureTime"))
-    gain = float(meta.get_item("EXIF:ISOSpeed")) / 100.0
+    exposure_time = meta.exposure()
+    gain = meta.gain()
 
     # apply image correction methods to raw image
     # step 1 - row gradient correction, vignette & radiometric calibration:
     # compute the vignette map image
-    vig, x, y = vignette_map(meta, x_dim, y_dim)
+    vig, x, y = vignette_map(meta, ncols, nrows)
 
     # row gradient correction
     r_cal = 1.0 / (1.0 + a2 * y / exposure_time - a3 * y)
@@ -67,8 +69,7 @@ def raw_image_to_radiance(meta, image_raw):
     # multiply with the radiometric calibration coefficient
     # need to normalize by 2^16 for 16 bit images
     # because coefficients are scaled to work with input values of max 1.0
-    bits_perpixel = meta.get_item("EXIF:BitsPerSample")
-    bit_depthmax = float(2 ** bits_perpixel)
+    bit_depthmax = float(2 ** meta.bits_per_pixel())
     radiance_image = lt_im.astype(float) / (gain * exposure_time) * a1 / bit_depthmax
 
     # return both the radiance compensated image and the DN corrected image, for the
@@ -76,17 +77,14 @@ def raw_image_to_radiance(meta, image_raw):
     return radiance_image.T, lt_im.T, vig.T, r_cal.T
 
 
-def vignette_map(meta, x_dim, y_dim):
+def vignette_map(
+    meta: metadata.MetadataFromExif, ncols: int, nrows: int
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     # get vignette center
-    x_vignette = float(meta.get_item("XMP:VignettingCenter", 0))
-    y_vignette = float(meta.get_item("XMP:VignettingCenter", 1))
+    x_vignette, y_vignette = meta.vignette_center()
 
     # get vignette polynomial
-    n_vignette_poly = meta.size("XMP:VignettingPolynomial")
-    vignette_poly_list = [
-        float(meta.get_item("XMP:VignettingPolynomial", i))
-        for i in range(n_vignette_poly)
-    ]
+    vignette_poly_list = meta.vignette_polynomial()
 
     # reverse list and append 1., so that we can call with numpy polyval
     vignette_poly_list.reverse()
@@ -95,7 +93,7 @@ def vignette_map(meta, x_dim, y_dim):
 
     # perform vignette correction
     # get coordinate grid across image
-    x, y = np.meshgrid(np.arange(x_dim), np.arange(y_dim))
+    x, y = np.meshgrid(np.arange(ncols), np.arange(nrows))
 
     # meshgrid returns transposed arrays
     x = x.T
@@ -111,47 +109,22 @@ def vignette_map(meta, x_dim, y_dim):
     return vignette, x, y
 
 
-def focal_plane_resolution_px_per_mm(meta):
-    fp_x_resolution = float(meta.get_item("EXIF:FocalPlaneXResolution"))
-    fp_y_resolution = float(meta.get_item("EXIF:FocalPlaneYResolution"))
-    return fp_x_resolution, fp_y_resolution
-
-
-def focal_length_mm(meta):
-    units = meta.get_item("XMP:PerspectiveFocalLengthUnits")
-    focal_length_mm = 0.0
-    if units == "mm":
-        focal_length_mm = float(meta.get_item("XMP:PerspectiveFocalLength"))
-    else:
-        focal_length_px = float(meta.get_item("XMP:PerspectiveFocalLength"))
-        focal_length_mm = focal_length_px / focal_plane_resolution_px_per_mm(meta)[0]
-    return focal_length_mm
-
-
-def correct_lens_distortion(meta, image):
+def correct_lens_distortion(image: np.ndarray, meta: metadata.MetadataFromExif) -> np.ndarray:
     # get lens distortion parameters
-    n_distortion = meta.size("XMP:PerspectiveDistortion")
-    distortion_params = np.array(
-        [
-            float(meta.get_item("XMP:PerspectiveDistortion", i))
-            for i in range(n_distortion)
-        ]
-    )
+    distortion_params = np.array(meta.distortion_parameters())
+
     # get the two principal points
-    pp = np.array(meta.get_item("XMP:PrincipalPoint").split(",")).astype(np.float)
+    pp = np.array(meta.principal_point())
     # values in pp are in [mm] and need to be rescaled to pixels
-    focalplane_xres = float(meta.get_item("EXIF:FocalPlaneXResolution"))
-    focalplane_yres = float(meta.get_item("EXIF:FocalPlaneYResolution"))
+    focalplane_xres, focalplane_yres = meta.focal_plane_resolution_px_per_mm()
 
     c_x = pp[0] * focalplane_xres
     c_y = pp[1] * focalplane_yres
     # k = distortion_params[0:3] # seperate out k -parameters
     # p = distortion_params[3::] # separate out p - parameters
-    # fx = fy = float(meta.get_item('XMP:PerspectiveFocalLength'))
-    fx = fy = focal_length_mm(meta) * focalplane_xres
+    fx = fy = meta.focal_length_mm() * focalplane_xres
 
     # apply perspective distortion
-
     h, w = image.shape
 
     # set up camera matrix for cv2
@@ -167,10 +140,10 @@ def correct_lens_distortion(meta, image):
     dist_coeffs = distortion_params[[0, 1, 3, 4, 2]]
 
     new_cam_mat, _ = cv2.getOptimalNewCameraMatrix(cam_mat, dist_coeffs, (w, h), 1)
+
     map1, map2 = cv2.initUndistortRectifyMap(
         cam_mat, dist_coeffs, np.eye(3), new_cam_mat, (w, h), cv2.CV_32F
     )  # cv2.CV_32F for 32 bit floats
-    # compute the undistorted 16 bit image
-    undistorted_image = cv2.remap(image, map1, map2, cv2.INTER_LINEAR)
 
-    return undistorted_image
+    # compute the undistorted 16 bit image
+    return cv2.remap(image, map1, map2, cv2.INTER_LINEAR)

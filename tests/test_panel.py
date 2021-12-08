@@ -29,29 +29,27 @@ import micasense.panel as panel
 import operator
 
 
-def test_RP06_panel_ID(panel_image_name_RP06_blue):
-    img = image.Image(panel_image_name_RP06_blue)
+def test_rp06_panel_id(panel_image_name_rp06_blue):
+    img = image.Image(panel_image_name_rp06_blue)
     pan = panel.Panel(img)
-    qr_corners = pan.qr_corners()
+    # qr_corners = pan.qr_corners()
     assert pan.panel_version == 6
 
 
-def test_RP06_panel_ID_autodetect(panel_image_name_RP06_blue):
-    img = image.Image(panel_image_name_RP06_blue)
+def test_rp06_panel_id_autodetect(panel_image_name_rp06_blue):
+    img = image.Image(panel_image_name_rp06_blue)
     pan = panel.Panel(img, ignore_autocalibration=True)
-    qr_corners = pan.qr_corners()
+    # qr_corners = pan.qr_corners()
 
     assert pan.panel_version == 6
 
 
-def test_RP06_panel_raw(panel_images_RP06):
+def test_rp06_panel_raw(panel_images_rp06):
     test_mean = [33082, 34347, 33971, 34186, 33371]
     test_std = [474.7, 582.6, 476.3, 464, 658.9]
     test_num = [3616, 3552, 3669, 3612, 3729]
     test_sat = [0, 0, 0, 0, 0]
-    for i, m, s, n, sa in zip(
-        panel_images_RP06, test_mean, test_std, test_num, test_sat
-    ):
+    for i, m, s, n, sa in zip(panel_images_rp06, test_mean, test_std, test_num, test_sat):
         img = image.Image(i)
         pan = panel.Panel(img)
         mean, std, num, sat = pan.raw()
@@ -100,9 +98,7 @@ def test_panel_corners(panel_image_name):
 # test manually providing bad corners - in this case the corners of the qr code itself
 def test_raw_panel_bad_corners(panel_image_name):
     img = image.Image(panel_image_name)
-    pan = panel.Panel(
-        img, panelCorners=[[460, 599], [583, 599], [584, 478], [462, 477]]
-    )
+    pan = panel.Panel(img, panel_corners=[[460, 599], [583, 599], [584, 478], [462, 477]])
     mean, std, num, sat = pan.raw()
     assert mean == pytest.approx(26965, rel=0.01)
     assert std == pytest.approx(15396.0, rel=0.05)
@@ -113,9 +109,7 @@ def test_raw_panel_bad_corners(panel_image_name):
 # test manually providing good corners
 def test_raw_panel_manual(panel_image_name):
     img = image.Image(panel_image_name)
-    pan = panel.Panel(
-        img, panelCorners=[[809, 613], [648, 615], [646, 454], [808, 452]]
-    )
+    pan = panel.Panel(img, panel_corners=[[809, 613], [648, 615], [646, 454], [808, 452]])
     mean, std, num, sat = pan.raw()
     assert mean == pytest.approx(45406, rel=0.01)
     assert std == pytest.approx(738.0, rel=0.05)
@@ -126,9 +120,7 @@ def test_raw_panel_manual(panel_image_name):
 # test saturated pixels with modified panel picture
 def test_raw_panel_saturatedl(panel_image_name):
     img = image.Image(panel_image_name)
-    pan = panel.Panel(
-        img, panelCorners=[[809, 613], [648, 615], [646, 454], [808, 452]]
-    )
+    pan = panel.Panel(img, panel_corners=[[809, 613], [648, 615], [646, 454], [808, 452]])
 
     # saturate 2500 pixels in the raw image - note that on the undistorted image this
     # will result in 2329 saturated pixels
@@ -228,7 +220,7 @@ def test_ordered_coordinates(panel_image_name):
         ordered_corners = img.panel_region
     else:
         ordered_corners = [(809, 613), (648, 615), (646, 454), (808, 452)]
-    pan = panel.Panel(img, panelCorners=ordered_corners)
+    pan = panel.Panel(img, panel_corners=ordered_corners)
     assert pan.ordered_panel_coordinates() == ordered_corners
 
 
@@ -236,5 +228,5 @@ def test_unordered_coordinates(panel_image_name):
     img = image.Image(panel_image_name)
     ordered_corners = [(809, 613), (648, 615), (646, 454), (808, 452)]
     unordered_corners = [(648, 615), (809, 613), (808, 452), (646, 454)]
-    pan = panel.Panel(img, panelCorners=unordered_corners)
+    pan = panel.Panel(img, panel_corners=unordered_corners)
     assert pan.ordered_panel_coordinates() == ordered_corners

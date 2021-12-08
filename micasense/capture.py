@@ -3,9 +3,10 @@
 """
 MicaSense Capture Class
 
-    A Capture is a set of Images taken by one camera which share the same unique capture identifier (capture_id).
-    Generally these images will be found in the same folder and also share the same filename prefix, such
-    as IMG_0000_*.tif, but this is not required.
+    A Capture is a set of Images taken by one camera which share the same unique
+    capture identifier (capture_id). Generally these images will be found in the
+    same folder and also share the same filename prefix, such as IMG_0000_*.tif,
+    but this is not required.
 
 Copyright 2017 MicaSense, Inc.
 
@@ -28,15 +29,20 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
 import math
-import os
 
 import cv2
 import imageio
 import numpy as np
 
+from pathlib2 import Path
+from os.path import isfile
+from typing import Union, List, Optional
+
+import micasense.load_yaml as ms_yaml
 import micasense.image as image
 import micasense.imageutils as imageutils
 import micasense.plotutils as plotutils
+from micasense.panel import Panel
 
 
 class Capture(object):
@@ -47,29 +53,48 @@ class Capture(object):
     as IMG_0000_*.tif, but this is not required.
     """
 
-    def __init__(self, images, panel_corners=None):
+    def __init__(
+        self,
+        images: Union[image.Image, List[image.Image]],
+        panel_corners: Optional[Union[List[int], None]] = None,
+    ):
         """
-        :param images: str or List of str system file paths.
-            Class is typically created using from_file() or from_file_list() methods.
-            Captures are also created automatically using ImageSet.from_directory()
-        :param panel_corners: 3d List of int coordinates
-            e.g. [[[873, 1089], [767, 1083], [763, 1187], [869, 1193]],
-                    [[993, 1105], [885, 1101], [881, 1205], [989, 1209]],
-                    [[1000, 1030], [892, 1026], [888, 1130], [996, 1134]],
-                    [[892, 989], [786, 983], [780, 1087], [886, 1093]],
-                    [[948, 1061], [842, 1057], [836, 1161], [942, 1165]]]
+        Parameters
+        ----------
+        images: image.Image, List[image.Image]
 
-            The camera should automatically detect panel corners. This instance variable will be None for aerial
-            captures. You can populate this for panel captures by calling detect_panels().
+            system file paths.
+            Class is typically created using from_file(str or Path),
+            from_file_list(List[str] or List[Path]), or from_yaml(str
+            or Path) methods. Captures are also created automatically
+            using ImageSet.from_directory()
+        panel_corners: List[int] or None [Optional]
+            List of int coordinates
+            e.g.
+            [
+                [[873, 1089], [767, 1083], [763, 1187], [869, 1193]],
+                [[993, 1105], [885, 1101], [881, 1205], [989, 1209]],
+                [[1000, 1030], [892, 1026], [888, 1130], [996, 1134]],
+                [[892, 989], [786, 983], [780, 1087], [886, 1093]],
+                [[948, 1061], [842, 1057], [836, 1161], [942, 1165]]
+            ]
+
+            The camera should automatically detect panel corners. This instance
+            variable will be None for aerial captures. You can populate this for
+            panel captures by calling detect_panels().
         """
+        err_msg = "Provide an image.Image or List[image.Image] to create a Capture."
         if isinstance(images, image.Image):
             self.images = [images]
         elif isinstance(images, list):
-            self.images = images
+            # ensure that the list only contains image.Image objects
+            if all(type(i) is image.Image for i in images):
+                self.images = images
+            else:
+                raise RuntimeError(err_msg)
         else:
-            raise RuntimeError(
-                "Provide an Image or list of Images to create a Capture."
-            )
+            raise RuntimeError(err_msg)
+
         self.num_bands = len(self.images)
         self.images.sort()
         capture_ids = [img.capture_id for img in self.images]
@@ -114,43 +139,84 @@ class Capture(object):
         """
         [self.append_image(img) for img in images]
 
-    def append_file(self, file_name):
+    def append_file(self, filename):
         """
         Add an Image to the Capture using a file path.
-        :param file_name: str system file path.
+        :param filename: str system file path.
         """
-        self.append_image(image.Image(file_name))
+        self.append_image(image.Image(filename))
 
     @classmethod
-    def from_file(cls, file_name):
+    def from_file(cls, filename: Union[Path, str]):
         """
         Create Capture instance from file path.
-        :param file_name: str system file path
-        :return: Capture object.
+        Parameters
+        ----------
+        filename: Path or str
+            system file path
+        Returns
+        -------
+        Capture object.
         """
-        return cls(image.Image(file_name))
+        return cls(image.Image(image_path=filename))
 
     @classmethod
-    def from_filelist(cls, file_list):
+    def from_filelist(cls, file_list: Union[List[Path], List[str]]):
         """
         Create Capture instance from List of file paths.
-        :param file_list: List of str system file paths.
-        :return: Capture object.
+        Parameters
+        ----------
+        file_list: List of str
+            File paths for each band in a single capture
+        Returns
+        -------
+        Capture object.
         """
         if len(file_list) == 0:
             raise IOError("No files provided. Check your file paths.")
-        for file in file_list:
-            if not os.path.isfile(file):
+        for f in file_list:
+            if not isfile(f):
                 raise IOError(
-                    f"All files in file list must be a file. The following file is not:\n{file}"
+                    "All files in file list must be a file. "
+                    f"The following file is not:\n{f}"
                 )
-        images = [image.Image(file) for file in file_list]
+        images = [image.Image(image_path=f) for f in file_list]
+        return cls(images)
+
+    @classmethod
+    def from_yaml(cls, yaml_file: Union[Path, str]):
+        """
+        Create Capture object from a yaml file containing the
+        relevant metadata for each band.
+
+        Parameters
+        ----------
+        yaml_file : Path or str
+            The yaml file
+        Returns
+        -------
+        Capture object.
+        """
+        d = ms_yaml.load_all(yaml_file)
+
+        images = [
+            image.Image(
+                image_path=d["image_data"][key]["filename"],
+                metadata_dict=d,
+            )
+            for key in d["image_data"]
+        ]
+
         return cls(images)
 
     def __get_reference_index(self):
         """
-        Find the reference image which has the smallest rig offsets - they should be (0,0).
-        :return: ndarray of ints - The indices of the minimum values along an axis.
+        Find the reference image which has the smallest rig offsets,
+        they should be (0,0).
+        Returns
+        -------
+        ndarray of ints,
+            The indices of the minimum values along an axis.
         """
         return np.argmin(
             (np.array([i.rig_xy_offset_in_px() for i in self.images]) ** 2).sum(1)
@@ -209,9 +275,11 @@ class Capture(object):
 
     def clear_image_data(self):
         """
-        Clears (dereferences to allow garbage collection) all internal image data stored in this class. Call this
-        after processing-heavy image calls to manage program memory footprint. When processing many images, such as
-        iterating over the Captures in an ImageSet, it may be necessary to call this after Capture is processed.
+        Clears (dereferences to allow garbage collection) all internal
+        image data stored in this class. Call this after processing-heavy
+        image calls to manage program memory footprint. When processing
+        many images, such as iterating over the Captures in an ImageSet,
+        it may be necessary to call this after Capture is processed.
         """
         for img in self.images:
             img.clear_image_data()
@@ -226,10 +294,13 @@ class Capture(object):
         return [img.band_name for img in self.images]
 
     def band_names_lower(self):
-        """Returns a list of the Image band names in all lower case for easier comparisons."""
+        """
+        Returns a list of the Image band names in all
+        lower case for easier comparisons
+        """
         return [img.band_name.lower() for img in self.images]
 
-    def dls_present(self):
+    def dls_present(self) -> bool:
         """Returns true if DLS metadata is present in the images."""
         return self.images[0].dls_present
 
@@ -237,20 +308,30 @@ class Capture(object):
         """Returns a list of the raw DLS measurements from the image metadata."""
         return [img.spectral_irradiance for img in self.images]
 
-    def dls_irradiance(self):
-        """Returns a list of the corrected earth-surface (horizontal) DLS irradiance in W/m^2/nm."""
+    def dls_irradiance(self) -> List[float]:
+        """
+        Returns a list of the corrected earth-surface (horizontal)
+        DLS irradiance in W/m^2/nm
+        """
         return [img.horizontal_irradiance for img in self.images]
 
     def direct_irradiance(self):
-        """Returns a list of the DLS irradiance from the direct source in W/m^2/nm."""
+        """
+        Returns a list of the DLS irradiance from the direct source in W/m^2/nm
+        """
         return [img.direct_irradiance for img in self.images]
 
     def scattered_irradiance(self):
-        """Returns a list of the DLS scattered irradiance from the direct source in W/m^2/nm."""
+        """
+        Returns a list of the DLS scattered irradiance
+        from the direct source in W/m^2/nm
+        """
         return [img.scattered_irradiance for img in self.images]
 
     def dls_pose(self):
-        """Returns (yaw, pitch, roll) tuples in radians of the earth-fixed DLS pose."""
+        """
+        Returns (yaw, pitch, roll) tuples in radians of the earth-fixed DLS pose
+        """
         return self.images[0].dls_yaw, self.images[0].dls_pitch, self.images[0].dls_roll
 
     def plot_raw(self):
@@ -274,8 +355,14 @@ class Capture(object):
 
     def plot_undistorted_reflectance(self, irradiance_list):
         """
-        Compute (if necessary) and plot reflectances given a list of irradiances.
-        :param irradiance_list: List returned from Capture.dls_irradiance() or Capture.panel_irradiance()
+        Compute (if necessary) and plot reflectances given a list
+        of irradiances.
+
+        Parameters
+        ----------
+        irradiance_list: List
+            A list returned from Capture.dls_irradiance() or
+            Capture.panel_irradiance()
         """
         self.__plot(
             self.undistorted_reflectance(irradiance_list),
@@ -296,12 +383,20 @@ class Capture(object):
         """
         [img.undistorted_radiance() for img in self.images]
 
-    def compute_reflectance(self, irradiance_list=None, force_recompute=True):
+    def compute_reflectance(self, irradiance_list=None, force_recompute=True) -> None:
         """
         Compute Image reflectance from irradiance list, but don't return.
-        :param irradiance_list: List returned from Capture.dls_irradiance() or Capture.panel_irradiance()
-        :param force_recompute: boolean to determine if reflectance is recomputed.
-        :return: None
+
+        Parameters
+        ----------
+        irradiance_list: List
+            A list returned from Capture.dls_irradiance() or Capture.panel_irradiance()
+        force_recompute: boolean
+            Specifies whether reflectance is to be recomputed.
+
+        Returns
+        -------
+        None
         """
         if irradiance_list is not None:
             [
@@ -313,12 +408,21 @@ class Capture(object):
 
     def compute_undistorted_reflectance(
         self, irradiance_list=None, force_recompute=True
-    ):
+    ) -> None:
         """
         Compute undistorted image reflectance from irradiance list.
-        :param irradiance_list: List returned from Capture.dls_irradiance() or Capture.panel_irradiance()   TODO: improve this docstring
-        :param force_recompute: boolean to determine if reflectance is recomputed.
-        :return: None
+
+        Parameters
+        ----------
+        irradiance_list: List
+            A list of returned from Capture.dls_irradiance() or Capture.panel_irradiance()
+            TODO: improve this docstring
+        force_recompute: boolean
+           Specifies whether reflectance is to be recomputed.
+
+        Returns
+        -------
+        None
         """
         if irradiance_list is not None:
             [
@@ -343,25 +447,29 @@ class Capture(object):
 
     def eo_indices(self):
         """Returns a list of the indexes of the EO Images in the Capture."""
-        return [
-            index for index, img in enumerate(self.images) if img.band_name != "LWIR"
-        ]
+        return [index for index, img in enumerate(self.images) if img.band_name != "LWIR"]
 
     def lw_indices(self):
-        """Returns a list of the indexes of the longwave infrared Images in the Capture."""
-        return [
-            index for index, img in enumerate(self.images) if img.band_name == "LWIR"
-        ]
+        """
+        Returns a list of the indexes of the longwave infrared Images in the Capture
+        """
+        return [index for index, img in enumerate(self.images) if img.band_name == "LWIR"]
 
     def reflectance(self, irradiance_list):
         """
         Compute reflectance Images.
-        :param irradiance_list: List returned from Capture.dls_irradiance() or Capture.panel_irradiance()   TODO: improve this docstring
-        :return: List of reflectance EO and long wave infrared Images for given irradiance.
+
+        Parameters
+        ----------
+        irradiance_list: List
+           A list returned from Capture.dls_irradiance() or Capture.panel_irradiance()
+           TODO: improve this docstring
+        Returns
+        -------
+        List of reflectance EO and long wave infrared Images for given irradiance.
         """
         eo_imgs = [
-            img.reflectance(irradiance_list[i])
-            for i, img in enumerate(self.eo_images())
+            img.reflectance(irradiance_list[i]) for i, img in enumerate(self.eo_images())
         ]
         lw_imgs = [img.reflectance() for i, img in enumerate(self.lw_images())]
         return eo_imgs + lw_imgs
@@ -369,8 +477,15 @@ class Capture(object):
     def undistorted_reflectance(self, irradiance_list):
         """
         Compute undistorted reflectance Images.
-        :param irradiance_list: List returned from Capture.dls_irradiance() or Capture.panel_irradiance()   TODO: improve this docstring
-        :return: List of undistorted reflectance images for given irradiance.
+
+        Parameters
+        ----------
+        irradiance_list: List
+            A list returned from Capture.dls_irradiance() or Capture.panel_irradiance()
+            TODO: improve this docstring
+        Returns
+        -------
+        List of undistorted reflectance images for given irradiance.
         """
         eo_imgs = [
             img.undistorted(img.reflectance(irradiance_list[i]))
@@ -383,12 +498,14 @@ class Capture(object):
 
     def panels_in_all_expected_images(self):
         """
-        Check if all expected reflectance panels are detected in the EO Images in the Capture.
-        :return: True if reflectance panels are detected.
+        Check if all expected reflectance panels are
+        detected in the EO Images in the Capture.
+
+        Returns
+        -------
+        True if reflectance panels are detected.
         """
-        expected_panels = sum(
-            str(img.band_name).upper() != "LWIR" for img in self.images
-        )
+        expected_panels = sum(str(img.band_name).upper() != "LWIR" for img in self.images)
         return self.detect_panels() == expected_panels
 
     def panel_raw(self):
@@ -423,9 +540,7 @@ class Capture(object):
                 panel.reflectance_from_panel_serial() for panel in self.panels
             ]
         if len(reflectances) != len(self.panels):
-            raise ValueError(
-                "Length of panel reflectances must match length of Images."
-            )
+            raise ValueError("Length of panel reflectances must match length of Images.")
         irradiance_list = []
         for i, p in enumerate(self.panels):
             mean_irr = p.irradiance_mean(reflectances[i])
@@ -458,12 +573,11 @@ class Capture(object):
 
     def detect_panels(self):
         """Detect reflectance panels in the Capture, and return a count."""
-        from micasense.panel import Panel
 
         if self.panels is not None and self.detected_panel_count == len(self.images):
             return self.detected_panel_count
         self.panels = [
-            Panel(img, panelCorners=pc)
+            Panel(img, panel_corners=pc)
             for img, pc in zip(self.images, self.panel_corners)
         ]
         self.detected_panel_count = 0
@@ -525,22 +639,26 @@ class Capture(object):
         normalize=False,
         img_type=None,
         motion_type=cv2.MOTION_HOMOGRAPHY,
-    ):
+    ) -> np.ndarray:
         """
-        Creates aligned Capture. Computes undistorted radiance or reflectance images if necessary.
-        :param irradiance_list: List of mean panel region irradiance.
-        :param warp_matrices: 2d List of warp matrices derived from Capture.get_warp_matrices()
-        :param normalize: FIXME: This parameter isn't used?
-        :param img_type: str 'radiance' or 'reflectance' depending on image metadata.
-        :param motion_type: OpenCV import. Also know as warp_mode. MOTION_HOMOGRAPHY or MOTION_AFFINE.
-                            For Altum images only use HOMOGRAPHY.
-        :return: ndarray with alignment changes
+        Creates aligned Capture. Computes undistorted radiance
+        or reflectance images if necessary.
+
+        Parameters
+        ----------
+        irradiance_list: List of mean panel region irradiance.
+        warp_matrices: 2d List of warp matrices derived from Capture.get_warp_matrices()
+        normalize: FIXME: This parameter isn't used?
+        img_type: str 'radiance' or 'reflectance' depending on image metadata.
+        motion_type: OpenCV import.
+            Also known as warp_mode. MOTION_HOMOGRAPHY or MOTION_AFFINE.
+            For Altum images only use HOMOGRAPHY.
+
+        Returns
+        -------
+        np.ndarray with alignment changes
         """
-        if (
-            img_type is None
-            and irradiance_list is None
-            and self.dls_irradiance() is None
-        ):
+        if img_type is None and irradiance_list is None and self.dls_irradiance() is None:
             self.compute_undistorted_radiance()
             img_type = "radiance"
         elif img_type is None:
@@ -575,15 +693,17 @@ class Capture(object):
         return self.__aligned_capture.shape
 
     def save_capture_as_stack(
-        self, out_file_name, sort_by_wavelength=False, photometric="MINISBLACK"
+        self, out_filename, sort_by_wavelength=False, photometric="MINISBLACK"
     ):
         """
         Output the Images in the Capture object as GTiff image stack.
-        :param out_file_name: str system file path
+        :param out_filename: str system file path
         :param sort_by_wavelength: boolean
         :param photometric: str GDAL argument for GTiff color matching
         """
         from osgeo.gdal import GetDriverByName, GDT_UInt16
+
+        # TODO: Change to Rasterio
 
         if self.__aligned_capture is None:
             raise RuntimeError(
@@ -594,7 +714,7 @@ class Capture(object):
         driver = GetDriverByName("GTiff")
 
         out_raster = driver.Create(
-            out_file_name,
+            out_filename,
             cols,
             rows,
             bands,
@@ -641,7 +761,7 @@ class Capture(object):
 
     def save_capture_as_rgb(
         self,
-        out_file_name,
+        out_filename,
         gamma=1.4,
         downsample=1,
         white_balance="norm",
@@ -652,15 +772,18 @@ class Capture(object):
     ):
         """
         Output the Images in the Capture object as RGB.
-        :param out_file_name: str system file path
-        :param gamma: float gamma correction
-        :param downsample: int downsample for cv2.resize()
-        :param white_balance: str 'norm' to normalize across bands using hist_min_percent and hist_max_percent.
-            Else this parameter is ignored.
-        :param hist_min_percent: float for min histogram stretch
-        :param hist_max_percent: float for max histogram stretch
-        :param sharpen: boolean
-        :param rgb_band_indices: List band order
+        Parameters
+        ----------
+        out_filename: str system file path
+        gamma: float gamma correction
+        downsample: int downsample for cv2.resize()
+        white_balance: str (default="norm")
+            Specifies whether to normalize across bands using hist_min_percent
+            and hist_max_percent. Else this parameter is ignored.
+        hist_min_percent: float for min histogram stretch
+        hist_max_percent: float for max histogram stretch
+        sharpen: boolean
+        rgb_band_indices: List band order
         """
         if self.__aligned_capture is None:
             raise RuntimeError(
@@ -675,7 +798,8 @@ class Capture(object):
             dtype=np.float32,
         )
 
-        # modify these percentiles to adjust contrast. for many images, 0.5 and 99.5 are good values
+        # modify these percentiles to adjust contrast.
+        # For many images, 0.5 and 99.5 are good values
         im_min = np.percentile(
             self.__aligned_capture[:, :, rgb_band_indices].flatten(), hist_min_percent
         )
@@ -684,8 +808,9 @@ class Capture(object):
         )
 
         for i in rgb_band_indices:
-            # for rgb true color, we usually want to use the same min and max scaling across the 3 bands to
-            # maintain the "white balance" of the calibrated image
+            # For rgb true color, we usually want to use the same min and max
+            # scaling across the 3 bands to maintain the "white balance" of
+            # the calibrated image
             if white_balance == "norm":
                 im_display[:, :, i] = imageutils.normalize(
                     self.__aligned_capture[:, :, i], im_min, im_max
@@ -714,16 +839,17 @@ class Capture(object):
         else:
             unsharp_rgb = rgb
 
-        # Apply a gamma correction to make the render appear closer to what our eyes would see
+        # Apply a gamma correction to make the render appear
+        # closer to what our eyes would see
         if gamma != 0:
             gamma_corr_rgb = unsharp_rgb ** (1.0 / gamma)
-            imageio.imwrite(out_file_name, (255 * gamma_corr_rgb).astype("uint8"))
+            imageio.imwrite(out_filename, (255 * gamma_corr_rgb).astype("uint8"))
         else:
-            imageio.imwrite(out_file_name, (255 * unsharp_rgb).astype("uint8"))
+            imageio.imwrite(out_filename, (255 * unsharp_rgb).astype("uint8"))
 
     def save_thermal_over_rgb(
         self,
-        out_file_name,
+        out_filename,
         fig_size=(30, 23),
         lw_index=None,
         hist_min_percent=0.2,
@@ -731,7 +857,7 @@ class Capture(object):
     ):
         """
         Output the Images in the Capture object as thermal over RGB.
-        :param out_file_name: str system file path.
+        :param out_filename: str system file path.
         :param fig_size: Tuple dimensions of the figure.
         :param lw_index: int Index of LWIR Image in Capture.
         :param hist_min_percent: float Minimum histogram percentile.
@@ -742,7 +868,8 @@ class Capture(object):
                 "Call Capture.create_aligned_capture() prior to saving as RGB."
             )
 
-        # by default we don't mask the thermal, since it's native resolution is much lower than the MS
+        # by default we don't mask the thermal, since it's native
+        # resolution is much lower than the MS
         if lw_index is None:
             lw_index = self.lw_indices()[0]
         masked_thermal = self.__aligned_capture[:, :, lw_index]
@@ -757,8 +884,9 @@ class Capture(object):
             self.band_names_lower().index("blue"),
         ]
 
-        # for rgb true color, we usually want to use the same min and max scaling across the 3 bands to
-        # maintain the "white balance" of the calibrated image
+        # for rgb true color, we usually want to use the same min and max
+        # scaling across the 3 bands to maintain the "white balance" of
+        # the calibrated image
         im_min = np.percentile(
             self.__aligned_capture[:, :, rgb_band_indices].flatten(), hist_min_percent
         )  # modify these percentiles to adjust contrast
@@ -790,4 +918,4 @@ class Capture(object):
             contour_fmt="%.0fC",
             show=False,
         )
-        fig.savefig(out_file_name)
+        fig.savefig(out_filename)

@@ -165,11 +165,14 @@ class Panel(object):
             return None
 
         if self.panel_version < 3:
-            # reference_panel_pts = np.asarray([[894, 469], [868, 232], [630, 258], [656, 496]],
-            #                                 dtype=np.int32)
-            # reference_qr_pts = np.asarray([[898, 748], [880, 567], [701, 584], [718, 762]],
-            #                             dtype=np.int32)
-
+            # reference_panel_pts = np.asarray(
+            #     [[894, 469], [868, 232], [630, 258], [656, 496]],
+            #     dtype=np.int32,
+            # )
+            # reference_qr_pts = np.asarray(
+            #     [[898, 748], [880, 567], [701, 584], [718, 762]],
+            #     dtype=np.int32
+            # )
             # use the actual panel measures here - we use units of [mm]
             # the panel is 154.4 x 152.4 mm , vs. the 84 x 84 mm for the QR code
             # it is left 143.20 mm from the QR code
@@ -290,9 +293,7 @@ class Panel(object):
 
     def intensity(self):
         intensity_img = self.image.undistorted(self.image.intensity())
-        return self.region_stats(
-            intensity_img, self.panel_corners(), sat_threshold=65000
-        )
+        return self.region_stats(intensity_img, self.panel_corners(), sat_threshold=65000)
 
     def radiance(self):
         radiance_img = self.image.undistorted(self.image.radiance())

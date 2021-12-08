@@ -30,8 +30,11 @@ import datetime
 
 import micasense.dls as dls
 
-# pysolar changed their coordinate system from South-based to north-based between 0.6 and 0.8
-# we add some tests here to help ensure we captured that change properly
+# pysolar changed their coordinate system from South-based to north-based
+# between 0.6 and 0.8 we add some tests here to help ensure we captured
+# that change properly
+
+
 def test_ned_from_pysolar_north():
     assert dls.ned_from_pysolar(0, np.radians(45)) == pytest.approx(
         [0.707, 0, -0.707], 0.01
@@ -81,9 +84,11 @@ def test_ned_from_pysolar_northwest():
 
 
 def test_pysolar_az_el_vs_usno():
-    # for simplicity's sake, let's pick a couple places on the prime meridian on the vernal equinox,
-    #  and test those vs the USNO
-    # https://aa.usno.navy.mil/rstt/onedaytable?ID=AA&year=2019&month=3&day=20&place=&lon_sign=-1&lon_deg=0&lon_min=0&lat_sign=1&lat_deg=51&lat_min=28&tz=0&tz_sign=-1
+    # for simplicity's sake, let's pick a couple places on the prime meridian
+    # on the vernal equinox, and test those vs the USNO
+    # <https://aa.usno.navy.mil/rstt/onedaytable?ID=AA&year=2019&month=3&day=20&
+    #  place=&lon_sign=-1&lon_deg=0&lon_min=0&lat_sign=1&lat_deg=51&lat_min=28&
+    #  tz=0&tz_sign=-1>
     lat = 51.4769  # greenwich observatory
     lon = 0
     dt = datetime.datetime(2019, 3, 21, 12, 8, 0, tzinfo=datetime.timezone.utc)
@@ -94,7 +99,8 @@ def test_pysolar_az_el_vs_usno():
     assert sun_altitude == pytest.approx(math.radians(90 - lat), abs=0.01)
     assert sun_azimuth == pytest.approx(math.pi, abs=0.01)
 
-    # for simplicity's sake, let's pick a couple places on the prime meridian on the vernal equinox
+    # for simplicity's sake, let's pick a couple places on the prime meridian
+    # on the vernal equinox
     lat = 0
     lon = 0
     dt = datetime.datetime(2019, 3, 20, 12, 8, 0, tzinfo=datetime.timezone.utc)
@@ -103,7 +109,8 @@ def test_pysolar_az_el_vs_usno():
     )
     assert angle == pytest.approx(math.radians(lat), abs=0.01)
     assert sun_altitude == pytest.approx(math.radians(90 - lat), abs=0.01)
-    # assert sun_azimuth == pytest.approx(math.pi, abs=0.01) # should be straight up, at the equator, don't test elevation
+    # assert sun_azimuth == pytest.approx(math.pi, abs=0.01)
+    # should be straight up, at the equator, don't test elevation
 
     # middle of the ocean at 45deg sout latitutde
     lat = -45
@@ -118,7 +125,7 @@ def test_pysolar_az_el_vs_usno():
 
 
 def test_sun_angle_image(img):
-    if dls.havePysolar:
+    if dls.HAVE_PYSOLAR:
         sun_angle = dls.compute_sun_angle(
             (img.latitude, img.longitude, img.altitude),
             (img.dls_yaw, img.dls_pitch, img.dls_roll),

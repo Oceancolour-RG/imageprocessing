@@ -95,7 +95,9 @@ def test_dls_present(meta):
 
 
 def test_metadata_size(meta):
-    assert meta.size("XMP:RadiometricCalibration") == 3
+    # assert meta.size("XMP:RadiometricCalibration") == 3
+    # meta.size() no longer exists
+    assert len(meta.exif["Xmp.MicaSense.RadiometricCalibration"].value) == 3
 
 
 def test_center_wavelength(meta):

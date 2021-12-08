@@ -28,39 +28,25 @@ from __future__ import unicode_literals
 import os
 import pytz
 import math
-import exiftool
+import exiftool  # replace exiftool with pyexiv2
 
-from pathlib import Path
+from pathlib2 import Path
 from datetime import datetime, timedelta
 from typing import Optional, Union, Tuple, List
 
 
-class Metadata(object):
+class MetadataFromExif(object):
     """Container for Micasense image metadata"""
 
     def __init__(
         self,
         filename: Union[str, Path],
-        exiftool_path: Optional[Union[str, None]] = None,
-        exiftool_obj: Optional[Union[str, None]] = None,
     ):
-        if exiftool_obj is not None:
-            self.exif = exiftool_obj.get_metadata(str(filename))
-            return
-
-        if exiftool_path is not None:
-            self.exiftool_path = exiftool_path
-
-        elif os.environ.get("exiftoolpath") is not None:
-            self.exiftool_path = os.path.normpath(os.environ.get("exiftoolpath"))
-
-        else:
-            self.exiftool_path = None
 
         if not os.path.isfile(filename):
             raise IOError("Input path is not a file")
 
-        with exiftool.ExifTool(self.exiftool_path) as exift:
+        with exiftool.ExifTool(None) as exift:
             self.exif = exift.get_metadata(str(filename))
 
     def get_all(self) -> dict:
@@ -271,9 +257,7 @@ class Metadata(object):
         it's defined within the metadata
         """
         nelem = self.size("XMP:VignettingPolynomial")
-        return [
-            float(self.get_item("XMP:VignettingPolynomial", i)) for i in range(nelem)
-        ]
+        return [float(self.get_item("XMP:VignettingPolynomial", i)) for i in range(nelem)]
 
     def distortion_parameters(self) -> List[float]:
         nelem = self.size("XMP:PerspectiveDistortion")
@@ -296,9 +280,7 @@ class Metadata(object):
             focal_length_mm = float(self.get_item("XMP:PerspectiveFocalLength"))
         else:
             focal_length_px = float(self.get_item("XMP:PerspectiveFocalLength"))
-            focal_length_mm = (
-                focal_length_px / self.focal_plane_resolution_px_per_mm()[0]
-            )
+            focal_length_mm = focal_length_px / self.focal_plane_resolution_px_per_mm()[0]
         return focal_length_mm
 
     def focal_length_35_mm_eq(self) -> float:
@@ -326,6 +308,10 @@ class Metadata(object):
             )
         elif self.get_item("XMP:HorizontalIrradiance") is not None:
             # DLS2 but the metadata is missing the scale, assume 0.01
+            # For some reason, the DLS2 outputs processed irradiance
+            # with units of micro-W/cm^2/nm;
+            # Hence scale factor = 0.01
+            # W/m^2/nm = 0.01 micro-W/cm^2/nm
             scale_factor = 0.01
         else:
             # DLS1, so we use a scale of 1
@@ -406,7 +392,7 @@ class Metadata(object):
         """estimated direct light vector relative to the DLS2 reference frame"""
         if self.get_item("XMP:EstimatedDirectLightVector") is not None:
             return [
-                self.__float_or_zero(item)
+                self.__float_or_zero(item)  # This doesn't make sense!
                 for item in self.get_item("XMP:EstimatedDirectLightVector")
             ]
         else:

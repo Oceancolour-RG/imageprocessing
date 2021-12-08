@@ -32,8 +32,8 @@ import micasense.image as image
 
 
 def test_from_images(panel_rededge_file_list):
-    imgs = [image.Image(fle) for fle in panel_rededge_file_list]
-    cap = capture.Capture(imgs)
+    imgs = [image.Image(f) for f in panel_rededge_file_list]
+    cap = capture.Capture(images=imgs)
     assert cap is not None
     assert len(cap.images) == len(panel_rededge_file_list)
 
@@ -104,8 +104,18 @@ def test_uct_time(panel_image_name):
 def test_location(panel_image_name):
     cap1 = capture.Capture.from_file(panel_image_name)
     loc = cap1.location()
+    exp_lat = 36.576096
+    exp_lon = -119.4352689
+    exp_alt = 101.861
+
+    reldiff_lat = 100.0 * abs(exp_lat - loc[0]) / (0.5 * (exp_lat + loc[0]))
+    reldiff_lon = 100.0 * abs(exp_lon - loc[1]) / (0.5 * (exp_lon + loc[1]))
+    reldiff_alt = 100.0 * abs(exp_alt - loc[2]) / (0.5 * (exp_alt + loc[2]))
+
     assert len(loc) == 3
-    assert loc == (36.576096, -119.4352689, 101.861)
+    assert reldiff_lat < 0.01  # percent
+    assert reldiff_lon < 0.01  # percent
+    assert reldiff_alt < 0.01  # percent
 
 
 def test_dls_single_file(panel_image_name):

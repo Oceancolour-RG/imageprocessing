@@ -101,12 +101,15 @@ def align(pair):
     {
         'ref_index': index of reference image
         'match_index': index of image to match to reference
-        'warp_matrix': transformation matrix to use to map match image to reference image frame
+        'warp_matrix': transformation matrix to use to map match
+                       image to reference image frame
     }
 
-    Major props to Alexander Reynolds ( https://stackoverflow.com/users/5087436/alexander-reynolds ) for his
+    Major props to Alexander Reynolds,
+    https://stackoverflow.com/users/5087436/alexander-reynolds, for his
     insight into the pyramided matching process found at
-    https://stackoverflow.com/questions/45997891/cv2-motion-euclidean-for-the-warp-mode-in-ecc-image-alignment-method
+    https://stackoverflow.com/questions/45997891/
+    cv2-motion-euclidean-for-the-warp-mode-in-ecc-image-alignment-method
 
     """
     warp_mode = pair["warp_mode"]
@@ -172,7 +175,8 @@ def align(pair):
                 ),
             )
 
-        # Terminate the optimizer if either the max iterations or the threshold are reached
+        # Terminate the optimizer if either the max
+        # iterations or the threshold are reached
         criteria = (
             cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,
             max_iterations,
@@ -186,9 +190,7 @@ def align(pair):
             if show_debug_images:
                 import micasense.plotutils as plotutils
 
-                plotutils.plotwithcolorbar(
-                    gray1_pyr[level], "ref level {}".format(level)
-                )
+                plotutils.plotwithcolorbar(gray1_pyr[level], "ref level {}".format(level))
                 plotutils.plotwithcolorbar(
                     gray2_pyr[level], "match level {}".format(level)
                 )
@@ -212,13 +214,11 @@ def align(pair):
                 )
 
             if show_debug_images:
-                print(
-                    "Warp after alignment level {} is \n{}".format(level, warp_matrix)
-                )
+                print("Warp after alignment level {} is \n{}".format(level, warp_matrix))
 
-            if (
-                level != nol
-            ):  # scale up only the offset by a factor of 2 for the next (larger image) pyramid level
+            if level != nol:
+                # scale up only the offset by a factor of 2 for
+                # the next (larger image) pyramid level
                 if warp_mode == cv2.MOTION_HOMOGRAPHY:
                     warp_matrix = warp_matrix * np.array(
                         [[1, 1, 2], [1, 1, 2], [0.5, 0.5, 1]], dtype=np.float32
@@ -297,16 +297,15 @@ def align_capture(
                     "match_index": i,
                     "match_image": img.undistorted(img.radiance()).astype("float32"),
                     "translations": translations,
-                    "warp_matrix_init": np.array(
-                        warp_matrices_init[i], dtype=np.float32
-                    ),
+                    "warp_matrix_init": np.array(warp_matrices_init[i], dtype=np.float32),
                     "debug": debug,
                     "pyramid_levels": pyramid_levels,
                 }
             )
     warp_matrices = [None] * len(alignment_pairs)
 
-    # required to work across linux/mac/windows, see https://stackoverflow.com/questions/47852237
+    # required to work across linux/mac/windows,
+    # see https://stackoverflow.com/questions/47852237
     if multithreaded and multiprocessing.get_start_method() != "spawn":
         try:
             multiprocessing.set_start_method("spawn", force=True)
@@ -565,7 +564,7 @@ def map_points(
     warp_mode=cv2.MOTION_HOMOGRAPHY,
 ):
     # extra dimension makes opencv happy
-    pts = np.array([pts], dtype=np.float)
+    pts = np.array([pts], dtype=np.float64)
     new_cam_mat, _ = cv2.getOptimalNewCameraMatrix(
         camera_matrix, distortion_coeffs, image_size, 1
     )

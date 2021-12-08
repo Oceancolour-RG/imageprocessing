@@ -24,7 +24,11 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
 
+import warnings
 import numpy as np
+
+from datetime import datetime
+from typing import Tuple
 
 # for DLS correction, we need the sun position at the time the image was taken
 # this can be computed using the pysolar package (ver 0.6)
@@ -138,15 +142,14 @@ def get_orientation(pose, ori):
 
 
 def compute_sun_angle(
-    position,
-    pose,
-    utc_datetime,
-    sensor_orientation,
-):
+    position: Tuple[float, float, float],
+    pose: Tuple[float, float, float],
+    utc_datetime: datetime,
+    sensor_orientation: np.ndarray,
+) -> Tuple[float, float, float, float, float]:
     """compute the sun angle using pysolar functions"""
     altitude = 0
     azimuth = 0
-    import warnings
 
     with warnings.catch_warnings():
         # Ignore pysolar leap seconds offset warning
@@ -166,4 +169,5 @@ def compute_sun_angle(
         n_sun = ned_from_pysolar(sun_azimuth, sun_altitude)
         n_sensor = np.array(get_orientation(pose, sensor_orientation))
         angle = np.arccos(np.dot(n_sun, n_sensor))
+
     return n_sun, n_sensor, angle, sun_altitude, sun_azimuth

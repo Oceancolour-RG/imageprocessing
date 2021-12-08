@@ -24,16 +24,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
 
-import pytest
 import os
 
 import micasense.imageset as imageset
 import micasense.capture as capture
-
-
-@pytest.fixture()
-def files_dir():
-    return os.path.join("data", "0000SET", "000")
 
 
 progress_val = 0.0
@@ -66,7 +60,10 @@ def test_as_nested_lists(files_dir):
     imgset = imageset.ImageSet.from_directory(files_dir)
     assert imgset is not None
     data, columns = imgset.as_nested_lists()
-    assert data[0][1] == 36.576096
+    exp_lat = 36.576096
+
+    reldiff_lat = 100.0 * abs(data[0][1] - exp_lat) / 0.5 * (data[0][1] + exp_lat)
+    assert reldiff_lat < 0.01  # percent
     assert columns[0] == "timestamp"
 
 

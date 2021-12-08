@@ -24,6 +24,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
+import numpy as np
 import matplotlib.pyplot as plt
 
 from matplotlib.pylab import cm
@@ -133,9 +134,6 @@ def colormap(cmap):
     Could be one of 'gray, viridis, plasma, inferno, magma, nipy_spectral'
     """
     plt.set_cmap(cmap)
-
-
-import numpy as np
 
 
 def plot_ned_vector3d(x, y, z, u=0, v=0, w=0, title=None, figsize=(8, 5)):

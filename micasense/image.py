@@ -26,15 +26,18 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
-import os
 import cv2
 import math
 import numpy as np
 
+import micasense.load_yaml as ms_yaml
 import micasense.plotutils as plotutils
-import micasense.metadata as metadata
+import micasense.metadata2 as metadata
+#import micasense.metadata as metadata
 import micasense.dls as dls
 
+from os.path import isfile
+from pathlib2 import Path
 from typing import Optional, Union, Tuple
 
 
@@ -60,23 +63,63 @@ class Image(object):
     band of multispectral information
     """
 
-    def __init__(self, image_path, exiftool_obj=None):
-        if not os.path.isfile(image_path):
-            raise IOError("Provided path is not a file: {}".format(image_path))
+    def __init__(
+        self,
+        image_path: Union[Path, str],
+        yaml_path: Optional[Union[Path, str, None]] = None,
+        metadata_dict: Optional[Union[dict, None]] = None,
+    ):
+        """
+        Create an Image object from a single band.
+        Parameters
+        ----------
+        image_path : Path or str
+            The filename of the single band (.tif)
+        yaml_path : Path, str or None [Optional]
+            The yaml filename containing image metadata
+            for an acquisition image set.
+
+            A yaml file is useful, for instance, if a set of image
+            calibration or vignetting coefficients are used that are
+            different from that in the tif exif metadata.
+        metadata_dict : dict or None[Optional]
+            The metadata dictionary of the image_path
+
+        Notes
+        -----
+          +++ if both metadata_dict and yaml_path are specified then
+              metadata_dict is used, while ignoring yaml_path
+          +++ if metadata_dict=None while the yaml_path is specified,
+              then the metadata_dict is loaded from yaml_path
+        """
+        if not isfile(image_path):
+            raise IOError(f"Provided path is not a file: {image_path}")
+
+        if (metadata_dict is None) or (not isinstance(metadata_dict, dict)):
+            # metadata_dict is None or not a dict, check if yaml_path was
+            # specified so that metadata_dict can be loaded.
+            if yaml_path and isfile(yaml_path):
+                # load yaml as metadata_dict
+                metadata_dict = ms_yaml.load_all(yaml_path)
+
         self.path = image_path
-        self.meta = metadata.Metadata(self.path, exiftool_obj=exiftool_obj)
+        if metadata_dict is None:
+            self.meta = metadata.MetadataFromExif(filename=self.path)
+        else:
+            self.meta = metadata.MetadataFromDict(
+                filename=self.path, metadata_dict=metadata_dict
+            )
 
         if self.meta.band_name() is None:
-            raise ValueError(
-                "Provided file path does not have a band name: {}".format(image_path)
-            )
+            raise ValueError("Provided file path does not have a band name: {image_path}")
         if (
             self.meta.band_name().upper() != "LWIR"
             and not self.meta.supports_radiometric_calibration()
         ):
             raise ValueError(
-                "Library requires images taken with RedEdge-(3/M/MX) camera firmware v2.1.0 or later. "
-                + "Upgrade your camera firmware to at least version 2.1.0 to use this library with RedEdge-(3/M/MX) cameras."
+                "Library requires images taken with RedEdge-(3/M/MX) camera firmware "
+                "v2.1.0 or later. Upgrade your camera firmware to at least version "
+                "2.1.0 to use this library with RedEdge-(3/M/MX) cameras."
             )
 
         self.utc_time = self.meta.utc_time()
@@ -114,8 +157,14 @@ class Image(object):
         self.panel_region = self.meta.panel_region()
         self.panel_serial = self.meta.panel_serial()
 
+        # Note that dls_orientation_vector is only used
+        # for processing the DLS1 data. According to the
+        # Micasense website:
+        # https://support.micasense.com/hc/en-us/articles/115005084647-Reading-DLS-Irradiance-Metadata
+        # "The Horizontal Irradiance tag [DLS2] is not impacted by IMU errors since
+        #  it uses the directional light sensors for angle compensation".
+        self.dls_orientation_vector = np.array([0, 0, -1])
         if self.dls_present:
-            self.dls_orientation_vector = np.array([0, 0, -1])
             (
                 self.sun_vector_ned,
                 self.sensor_vector_ned,
@@ -130,7 +179,8 @@ class Image(object):
             )
             self.angular_correction = dls.fresnel(self.sun_sensor_angle)
 
-            # when we have good horizontal irradiance the camera provides the solar az and el also
+            # when we have good horizontal irradiance the camera
+            # provides the solar az and el also
             if (
                 self.meta.scattered_irradiance() != 0
                 and self.meta.direct_irradiance() != 0
@@ -146,16 +196,14 @@ class Image(object):
                 if self.meta.horizontal_irradiance_valid():
                     self.horizontal_irradiance = self.meta.horizontal_irradiance()
                 else:
-                    self.horizontal_irradiance = (
-                        self.compute_horizontal_irradiance_dls2()
-                    )
+                    self.horizontal_irradiance = self.compute_horizontal_irradiance_dls2()
             else:
                 self.direct_to_diffuse_ratio = 6.0  # assumption
                 self.horizontal_irradiance = self.compute_horizontal_irradiance_dls1()
 
             self.spectral_irradiance = self.meta.spectral_irradiance()
-        else:  # no dls present or LWIR band: compute what we can, set the rest to 0
-            self.dls_orientation_vector = np.array([0, 0, -1])
+        else:
+            # no dls present or LWIR band: compute what we can, set the rest to 0
             (
                 self.sun_vector_ned,
                 self.sensor_vector_ned,
@@ -171,28 +219,28 @@ class Image(object):
             self.direct_irradiance = 0
             self.direct_to_diffuse_ratio = 0
 
-        # Internal image containers; these can use a lot of memory, clear with Image.clear_images
+        # Internal image containers; these can use a lot of memory,
+        # clear with Image.clear_images
         self.__raw_image = None  # pure raw pixels
-        self.__intensity_image = (
-            None  # black level and gain-exposure/radiometric compensated
-        )
+        # black level and gain-exposure/radiometric compensated
+        self.__intensity_image = None
         self.__radiance_image = None  # calibrated to radiance
         self.__reflectance_image = None  # calibrated to reflectance (0-1)
         self.__reflectance_irradiance = None
         self.__undistorted_source = None  # can be any of raw, intensity, radiance
-        self.__undistorted_image = (
-            None  # current undistorted image, depdining on source
-        )
+        # current undistorted image, depdining on source
+        self.__undistorted_image = None
 
-    # solar elevation is defined as the angle betwee the horizon and the sun, so it is 0 when the
-    # sun is at the horizon and pi/2 when the sun is directly overhead
-    def horizontal_irradiance_from_direct_scattered(self):
+    # solar elevation is defined as the angle betwee the horizon and the sun,
+    # so it is 0 when the sun is at the horizon and pi/2 when the sun is
+    # directly overhead
+    def horizontal_irradiance_from_direct_scattered(self) -> float:
         return (
             self.direct_irradiance * np.sin(self.solar_elevation)
             + self.scattered_irradiance
         )
 
-    def compute_horizontal_irradiance_dls1(self):
+    def compute_horizontal_irradiance_dls1(self) -> float:
         percent_diffuse = 1.0 / self.direct_to_diffuse_ratio
         # percent_diffuse = 5e4/(img.center_wavelength**2)
         sensor_irradiance = self.spectral_irradiance / self.angular_correction
@@ -205,9 +253,11 @@ class Image(object):
         # compute irradiance on the ground using the solar altitude angle
         return self.horizontal_irradiance_from_direct_scattered()
 
-    def compute_horizontal_irradiance_dls2(self):
-        """Compute the proper solar elevation, solar azimuth, and horizontal irradiance
-        for cases where the camera system did not do it correctly"""
+    def compute_horizontal_irradiance_dls2(self) -> float:
+        """
+        Compute the proper solar elevation, solar azimuth, and horizontal
+        irradiance for cases where the camera system did not do it correctly
+        """
         _, _, _, self.solar_elevation, self.solar_azimuth = dls.compute_sun_angle(
             self.location, (0, 0, 0), self.utc_time, np.array([0, 0, -1])
         )
@@ -229,29 +279,24 @@ class Image(object):
             self.capture_id != other.capture_id
         )
 
-    def raw(self):
-        """Lazy load the raw image once neecessary"""
+    def raw(self) -> np.ndarray:
+        """Lazy load the raw image"""
         if self.__raw_image is None:
             try:
-                import rawpy
-
-                self.__raw_image = rawpy.imread(self.path).raw_image
-            except ImportError:
-                self.__raw_image = cv2.imread(self.path, -1)
+                self.__raw_image = cv2.imread(self.path, cv2.IMREAD_UNCHANGED)
             except IOError:
-                print("Could not open image at path {}".format(self.path))
-                raise
+                raise Exception(f"Could not open image at path {self.path}")
         return self.__raw_image
 
-    def set_raw(self, img):
+    def set_raw(self, img: np.ndarray) -> None:
         """set raw image from input img"""
         self.__raw_image = img.astype(np.uint16)
 
-    def set_undistorted(self, img):
+    def set_undistorted(self, img: np.ndarray) -> None:
         """set undistorted image from input img"""
         self.__undistorted_image = img.astype(np.uint16)
 
-    def set_external_rig_relatives(self, external_rig_relatives):
+    def set_external_rig_relatives(self, external_rig_relatives) -> None:
         self.rig_translations = external_rig_relatives["rig_translations"]
         # external rig relatives are in rad
         self.rig_relatives = [
@@ -265,7 +310,7 @@ class Image(object):
         self.focal_length = (fx + fy) * 0.5 / rx
         # to do - set the distortion etc.
 
-    def clear_image_data(self):
+    def clear_image_data(self) -> None:
         """clear all computed images to reduce memory overhead"""
         self.__raw_image = None
         self.__intensity_image = None
@@ -275,18 +320,40 @@ class Image(object):
         self.__undistorted_source = None
         self.__undistorted_image = None
 
-    def size(self):
+    def size(self) -> Tuple[int, int]:
         width, height = self.meta.image_size()
         return width, height
 
-    def reflectance(self, irradiance=None, force_recompute=False):
-        """Lazy-compute and return a reflectance image provided an irradiance reference"""
+    def reflectance(
+        self,
+        irradiance: Optional[Union[float, None]] = None,
+        force_recompute: Optional[bool] = False,
+        return_rrs: Optional[bool] = False,
+    ) -> np.ndarray:
+        """
+        Lazy-compute and return a reflectance image
+        provided an irradiance reference
+
+        Parameters
+        ----------
+        irradiance : float or None
+            The irradiance used to normalise the radiance image.
+            If None then the horizontal irradiance from the DLS2
+            will be used.
+        force_recompute : bool
+            Recompute the reflectance image even if already done so.
+        return_rrs : bool
+            if True : returns remote sensing reflectance, Rrs, (units: 1/sr)
+            if False: returns Reflectance (units: a.u.)
+            This only applies to VIS-NIR bands not LWIR
+        """
         if (
             self.__reflectance_image is not None
             and force_recompute is False
             and (self.__reflectance_irradiance == irradiance or irradiance is None)
         ):
             return self.__reflectance_image
+
         if irradiance is None and self.band_name != "LWIR":
             if self.horizontal_irradiance != 0.0:
                 irradiance = self.horizontal_irradiance
@@ -294,14 +361,20 @@ class Image(object):
                 raise RuntimeError(
                     "Provide a band-specific spectral irradiance to compute reflectance"
                 )
+
         if self.band_name != "LWIR":
             self.__reflectance_irradiance = irradiance
-            self.__reflectance_image = self.radiance() * math.pi / irradiance
+            if return_rrs:
+                self.__reflectance_image = self.radiance() / irradiance
+            else:
+                self.__reflectance_image = self.radiance() * math.pi / irradiance
+
         else:
             self.__reflectance_image = self.radiance()
+
         return self.__reflectance_image
 
-    def intensity(self, force_recompute=False):
+    def intensity(self, force_recompute: Optional[bool] = False) -> np.ndarray:
         """Lazy=computes and returns the intensity image after black level,
         vignette, and row correction applied.
         Intensity is in units of DN*Seconds without a radiance correction"""
@@ -331,7 +404,7 @@ class Image(object):
         self.__intensity_image = intensity_image.T
         return self.__intensity_image
 
-    def radiance(self, force_recompute=False):
+    def radiance(self, force_recompute: Optional[bool] = False) -> np.ndarray:
         """Lazy=computes and returns the radiance image after all radiometric
         corrections have been applied"""
         if self.__radiance_image is not None and force_recompute is False:
@@ -362,7 +435,7 @@ class Image(object):
         self.__radiance_image = radiance_image.T
         return self.__radiance_image
 
-    def vignette(self):
+    def vignette(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Get a numpy array which defines the value to multiply each pixel by to correct
         for optical vignetting effects.
         Note: this array is transposed from normal image orientation and comes as part
@@ -391,21 +464,33 @@ class Image(object):
         # compute matrix of distances from image center
         r = np.hypot((x - vignette_center_x), (y - vignette_center_y))
 
-        # compute the vignette polynomial for each distance - we divide by the polynomial so that the
-        # corrected image is image_corrected = image_original * vignetteCorrection
+        # compute the vignette polynomial for each distance - we divide by the
+        # polynomial so that the corrected image is,
+        # image_corrected = image_original * vignetteCorrection
         vignette = 1.0 / np.polyval(v_polynomial, r)
         return vignette, x, y
 
-    def undistorted_radiance(self, force_recompute=False):
+    def undistorted_radiance(self, force_recompute: Optional[bool] = False) -> np.ndarray:
         return self.undistorted(self.radiance(force_recompute))
 
-    def undistorted_reflectance(self, irradiance=None, force_recompute=False):
-        return self.undistorted(self.reflectance(irradiance, force_recompute))
+    def undistorted_reflectance(
+        self,
+        irradiance: Optional[Union[float, None]] = None,
+        force_recompute: Optional[bool] = False,
+        return_rrs: Optional[bool] = False,
+    ) -> np.ndarray:
+        return self.undistorted(
+            self.reflectance(
+                irradiance=irradiance,
+                force_recompute=force_recompute,
+                return_rrs=return_rrs,
+            )
+        )
 
-    def plottable_vignette(self):
+    def plottable_vignette(self) -> np.ndarray:
         return self.vignette()[0].T
 
-    def cv2_distortion_coeff(self):
+    def cv2_distortion_coeff(self) -> np.ndarray:
         # dist_coeffs = np.array(k[0],k[1],p[0],p[1],k[2]])
         return np.array(self.distortion_parameters)[[0, 1, 3, 4, 2]]
 
@@ -429,7 +514,7 @@ class Image(object):
         # set up distortion coefficients for cv2
         return cam_mat
 
-    def rig_xy_offset_in_px(self):
+    def rig_xy_offset_in_px(self) -> Tuple[float, float]:
         pixel_pitch_mm_x = 1.0 / self.focal_plane_resolution_px_per_mm[0]
         pixel_pitch_mm_y = 1.0 / self.focal_plane_resolution_px_per_mm[1]
         px_fov_x = 2.0 * math.atan2(pixel_pitch_mm_x / 2.0, self.focal_length)
@@ -438,7 +523,7 @@ class Image(object):
         t_y = math.radians(self.rig_relatives[1]) / px_fov_y
         return (t_x, t_y)
 
-    def undistorted(self, image):
+    def undistorted(self, image: np.ndarray) -> np.ndarray:
         """return the undistorted image from input image"""
         # If we have already undistorted the same source, just return that here
         # otherwise, lazy compute the undstorted image
@@ -477,9 +562,7 @@ class Image(object):
             title = "{} Band {} Intensity (DN*sec)".format(
                 self.band_name, self.band_index
             )
-        return plotutils.plotwithcolorbar(
-            self.intensity(), title=title, figsize=figsize
-        )
+        return plotutils.plotwithcolorbar(self.intensity(), title=title, figsize=figsize)
 
     def plot_radiance(self, title=None, figsize=None):
         """Create a single plot of the image converted to radiance"""

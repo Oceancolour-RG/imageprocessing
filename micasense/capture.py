@@ -29,19 +29,16 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
 import math
-
-import cv2
-import imageio
 import numpy as np
 
 from pathlib2 import Path
 from os.path import isfile
 from typing import Union, List, Optional
 
-import micasense.load_yaml as ms_yaml
 import micasense.image as image
-import micasense.imageutils as imageutils
+import micasense.load_yaml as ms_yaml
 import micasense.plotutils as plotutils
+
 from micasense.panel import Panel
 
 
@@ -107,8 +104,6 @@ class Capture(object):
             self.panel_corners = [None] * len(self.eo_indices())
         else:
             self.panel_corners = panel_corners
-
-        self.__aligned_capture = None
 
     def set_panel_corners(self, panel_corners):
         """
@@ -283,7 +278,6 @@ class Capture(object):
         """
         for img in self.images:
             img.clear_image_data()
-        self.__aligned_capture = None
 
     def center_wavelengths(self):
         """Returns a list of the image center wavelengths in nanometers."""
@@ -619,11 +613,17 @@ class Capture(object):
                 return False
         return True
 
-    def get_warp_matrices(self, ref_index=None):
+    def get_warp_matrices(self, ref_index=None) -> List[float]:
         """
-        Get warp matrices.
-        :param ref_index: int to specify image for homography
-        :return: 2d List of warp matrices
+        Get warp matrices. Used in imageutils.refine_alignment_warp
+
+        Parameters
+        ----------
+        ref_index: int to specify image for homography
+
+        Returns
+        -------
+        2d List of warp matrices
         """
         if ref_index is None:
             ref = self.images[self.__get_reference_index()]
@@ -631,291 +631,3 @@ class Capture(object):
             ref = self.images[ref_index]
         warp_matrices = [np.linalg.inv(im.get_homography(ref)) for im in self.images]
         return [w / w[2, 2] for w in warp_matrices]
-
-    def create_aligned_capture(
-        self,
-        irradiance_list=None,
-        warp_matrices=None,
-        normalize=False,
-        img_type=None,
-        motion_type=cv2.MOTION_HOMOGRAPHY,
-    ) -> np.ndarray:
-        """
-        Creates aligned Capture. Computes undistorted radiance
-        or reflectance images if necessary.
-
-        Parameters
-        ----------
-        irradiance_list: List of mean panel region irradiance.
-        warp_matrices: 2d List of warp matrices derived from Capture.get_warp_matrices()
-        normalize: FIXME: This parameter isn't used?
-        img_type: str 'radiance' or 'reflectance' depending on image metadata.
-        motion_type: OpenCV import.
-            Also known as warp_mode. MOTION_HOMOGRAPHY or MOTION_AFFINE.
-            For Altum images only use HOMOGRAPHY.
-
-        Returns
-        -------
-        np.ndarray with alignment changes
-        """
-        if img_type is None and irradiance_list is None and self.dls_irradiance() is None:
-            self.compute_undistorted_radiance()
-            img_type = "radiance"
-        elif img_type is None:
-            if irradiance_list is None:
-                irradiance_list = self.dls_irradiance() + [0]
-            self.compute_undistorted_reflectance(irradiance_list)
-            img_type = "reflectance"
-        if warp_matrices is None:
-            warp_matrices = self.get_warp_matrices()
-        cropped_dimensions, _ = imageutils.find_crop_bounds(
-            self, warp_matrices, warp_mode=motion_type
-        )
-        self.__aligned_capture = imageutils.aligned_capture(
-            self,
-            warp_matrices,
-            motion_type,
-            cropped_dimensions,
-            None,
-            img_type=img_type,
-        )
-        return self.__aligned_capture
-
-    def aligned_shape(self):
-        """
-        Get aligned_capture ndarray shape.
-        :return: Tuple of array dimensions for aligned_capture
-        """
-        if self.__aligned_capture is None:
-            raise RuntimeError(
-                "Call Capture.create_aligned_capture() prior to saving as stack."
-            )
-        return self.__aligned_capture.shape
-
-    def save_capture_as_stack(
-        self, out_filename, sort_by_wavelength=False, photometric="MINISBLACK"
-    ):
-        """
-        Output the Images in the Capture object as GTiff image stack.
-        :param out_filename: str system file path
-        :param sort_by_wavelength: boolean
-        :param photometric: str GDAL argument for GTiff color matching
-        """
-        from osgeo.gdal import GetDriverByName, GDT_UInt16
-
-        # TODO: Change to Rasterio
-
-        if self.__aligned_capture is None:
-            raise RuntimeError(
-                "Call Capture.create_aligned_capture() prior to saving as stack."
-            )
-
-        rows, cols, bands = self.__aligned_capture.shape
-        driver = GetDriverByName("GTiff")
-
-        out_raster = driver.Create(
-            out_filename,
-            cols,
-            rows,
-            bands,
-            GDT_UInt16,
-            options=[
-                "INTERLEAVE=BAND",
-                "COMPRESS=DEFLATE",
-                f"PHOTOMETRIC={photometric}",
-            ],
-        )
-        try:
-            if out_raster is None:
-                raise IOError("could not load gdal GeoTiff driver")
-
-            if sort_by_wavelength:
-                eo_list = list(
-                    np.argsort(np.array(self.center_wavelengths())[self.eo_indices()])
-                )
-            else:
-                eo_list = self.eo_indices()
-
-            for out_band, in_band in enumerate(eo_list):
-                out_band = out_raster.GetRasterBand(out_band + 1)
-                out_data = self.__aligned_capture[:, :, in_band]
-                out_data[out_data < 0] = 0
-                out_data[
-                    out_data > 2
-                ] = 2  # limit reflectance data to 200% to allow some specular reflections
-                out_band.WriteArray(
-                    out_data * 32768
-                )  # scale reflectance images so 100% = 32768
-                out_band.FlushCache()
-
-            for out_band, in_band in enumerate(self.lw_indices()):
-                out_band = out_raster.GetRasterBand(len(eo_list) + out_band + 1)
-                # scale data from float degC to back to centi-Kelvin to fit into uint16
-                out_data = (self.__aligned_capture[:, :, in_band] + 273.15) * 100
-                out_data[out_data < 0] = 0
-                out_data[out_data > 65535] = 65535
-                out_band.WriteArray(out_data)
-                out_band.FlushCache()
-        finally:
-            out_raster = None
-
-    def save_capture_as_rgb(
-        self,
-        out_filename,
-        gamma=1.4,
-        downsample=1,
-        white_balance="norm",
-        hist_min_percent=0.5,
-        hist_max_percent=99.5,
-        sharpen=True,
-        rgb_band_indices=(2, 1, 0),
-    ):
-        """
-        Output the Images in the Capture object as RGB.
-        Parameters
-        ----------
-        out_filename: str system file path
-        gamma: float gamma correction
-        downsample: int downsample for cv2.resize()
-        white_balance: str (default="norm")
-            Specifies whether to normalize across bands using hist_min_percent
-            and hist_max_percent. Else this parameter is ignored.
-        hist_min_percent: float for min histogram stretch
-        hist_max_percent: float for max histogram stretch
-        sharpen: boolean
-        rgb_band_indices: List band order
-        """
-        if self.__aligned_capture is None:
-            raise RuntimeError(
-                "Call Capture.create_aligned_capture() prior to saving as RGB."
-            )
-        im_display = np.zeros(
-            (
-                self.__aligned_capture.shape[0],
-                self.__aligned_capture.shape[1],
-                self.__aligned_capture.shape[2],
-            ),
-            dtype=np.float32,
-        )
-
-        # modify these percentiles to adjust contrast.
-        # For many images, 0.5 and 99.5 are good values
-        im_min = np.percentile(
-            self.__aligned_capture[:, :, rgb_band_indices].flatten(), hist_min_percent
-        )
-        im_max = np.percentile(
-            self.__aligned_capture[:, :, rgb_band_indices].flatten(), hist_max_percent
-        )
-
-        for i in rgb_band_indices:
-            # For rgb true color, we usually want to use the same min and max
-            # scaling across the 3 bands to maintain the "white balance" of
-            # the calibrated image
-            if white_balance == "norm":
-                im_display[:, :, i] = imageutils.normalize(
-                    self.__aligned_capture[:, :, i], im_min, im_max
-                )
-            else:
-                im_display[:, :, i] = imageutils.normalize(
-                    self.__aligned_capture[:, :, i]
-                )
-
-        rgb = im_display[:, :, rgb_band_indices]
-        rgb = cv2.resize(
-            rgb,
-            None,
-            fx=1 / downsample,
-            fy=1 / downsample,
-            interpolation=cv2.INTER_AREA,
-        )
-
-        if sharpen:
-            gaussian_rgb = cv2.GaussianBlur(rgb, (9, 9), 10.0)
-            gaussian_rgb[gaussian_rgb < 0] = 0
-            gaussian_rgb[gaussian_rgb > 1] = 1
-            unsharp_rgb = cv2.addWeighted(rgb, 1.5, gaussian_rgb, -0.5, 0)
-            unsharp_rgb[unsharp_rgb < 0] = 0
-            unsharp_rgb[unsharp_rgb > 1] = 1
-        else:
-            unsharp_rgb = rgb
-
-        # Apply a gamma correction to make the render appear
-        # closer to what our eyes would see
-        if gamma != 0:
-            gamma_corr_rgb = unsharp_rgb ** (1.0 / gamma)
-            imageio.imwrite(out_filename, (255 * gamma_corr_rgb).astype("uint8"))
-        else:
-            imageio.imwrite(out_filename, (255 * unsharp_rgb).astype("uint8"))
-
-    def save_thermal_over_rgb(
-        self,
-        out_filename,
-        fig_size=(30, 23),
-        lw_index=None,
-        hist_min_percent=0.2,
-        hist_max_percent=99.8,
-    ):
-        """
-        Output the Images in the Capture object as thermal over RGB.
-        :param out_filename: str system file path.
-        :param fig_size: Tuple dimensions of the figure.
-        :param lw_index: int Index of LWIR Image in Capture.
-        :param hist_min_percent: float Minimum histogram percentile.
-        :param hist_max_percent: float Maximum histogram percentile.
-        """
-        if self.__aligned_capture is None:
-            raise RuntimeError(
-                "Call Capture.create_aligned_capture() prior to saving as RGB."
-            )
-
-        # by default we don't mask the thermal, since it's native
-        # resolution is much lower than the MS
-        if lw_index is None:
-            lw_index = self.lw_indices()[0]
-        masked_thermal = self.__aligned_capture[:, :, lw_index]
-
-        im_display = np.zeros(
-            (self.__aligned_capture.shape[0], self.__aligned_capture.shape[1], 3),
-            dtype=np.float32,
-        )
-        rgb_band_indices = [
-            self.band_names_lower().index("red"),
-            self.band_names_lower().index("green"),
-            self.band_names_lower().index("blue"),
-        ]
-
-        # for rgb true color, we usually want to use the same min and max
-        # scaling across the 3 bands to maintain the "white balance" of
-        # the calibrated image
-        im_min = np.percentile(
-            self.__aligned_capture[:, :, rgb_band_indices].flatten(), hist_min_percent
-        )  # modify these percentiles to adjust contrast
-        im_max = np.percentile(
-            self.__aligned_capture[:, :, rgb_band_indices].flatten(), hist_max_percent
-        )  # for many images, 0.5 and 99.5 are good values
-        for dst_band, src_band in enumerate(rgb_band_indices):
-            im_display[:, :, dst_band] = imageutils.normalize(
-                self.__aligned_capture[:, :, src_band], im_min, im_max
-            )
-
-        # Compute a histogram
-        min_display_therm = np.percentile(masked_thermal, hist_min_percent)
-        max_display_therm = np.percentile(masked_thermal, hist_max_percent)
-
-        fig, _ = plotutils.plot_overlay_withcolorbar(
-            im_display,
-            masked_thermal,
-            figsize=fig_size,
-            title="Temperature over True Color",
-            vmin=min_display_therm,
-            vmax=max_display_therm,
-            overlay_alpha=0.25,
-            overlay_colormap="jet",
-            overlay_steps=16,
-            display_contours=True,
-            contour_steps=16,
-            contour_alpha=0.4,
-            contour_fmt="%.0fC",
-            show=False,
-        )
-        fig.savefig(out_filename)

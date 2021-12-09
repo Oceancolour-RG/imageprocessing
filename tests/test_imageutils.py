@@ -132,7 +132,7 @@ truth_camera_matrices = [
     ),
 ]
 
-expected_dimensions = (21.0, 12.0, 2035.0, 1467.0)
+expected_dimensions = (21.0, 12.0, 2054.0, 1477.0)
 
 
 def test_image_properties(non_panel_altum_capture):

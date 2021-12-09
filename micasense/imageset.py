@@ -36,8 +36,9 @@ from pprint import pprint
 
 from tqdm import tqdm
 
-import micasense.capture as capture
 import micasense.image as image
+import micasense.capture as capture
+import micasense.imageutils as imageutils
 
 warnings.simplefilter(action="once")
 
@@ -89,7 +90,7 @@ def save_capture(params, cap):
     try:
         # align capture
         if len(cap.images) == params["capture_len"]:
-            cap.create_aligned_capture(
+            im_aligned = imageutils.aligned_capture(
                 irradiance_list=params["irradiance"],
                 warp_matrices=params["warp_matrices"],
                 img_type=params["img_type"],
@@ -106,13 +107,19 @@ def save_capture(params, cap):
                 params["output_stack_dir"], cap.uuid + ".tif"
             )
             if params["overwrite"] or not os.path.exists(output_stack_file_path):
-                cap.save_capture_as_stack(output_stack_file_path)
+                imageutils.save_capture_as_stack(
+                    capture=cap,
+                    im_aligned=im_aligned,
+                    out_filename=output_stack_file_path,
+                )
         if params["output_rgb_dir"]:
             output_rgb_file_path = os.path.join(
                 params["output_rgb_dir"], cap.uuid + ".jpg"
             )
             if params["overwrite"] or not os.path.exists(output_rgb_file_path):
-                cap.save_capture_as_rgb(output_rgb_file_path)
+                imageutils.save_capture_as_rgb(
+                    im_aligned=im_aligned, out_filename=output_rgb_file_path
+                )
 
         cap.clear_image_data()
     except Exception as e:

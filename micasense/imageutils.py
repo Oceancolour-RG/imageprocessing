@@ -24,11 +24,22 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
 import cv2
+import imageio
 import numpy as np
 import multiprocessing
+
+from pathlib2 import Path
 from skimage.morphology import disk
-from skimage.filters import rank, gaussian
 from skimage.util import img_as_ubyte
+from skimage.filters import rank, gaussian
+from typing import Union, List, Tuple, Optional
+
+# TODO: Change to Rasterio
+from osgeo.gdal import GetDriverByName, GDT_UInt16
+
+
+import micasense.capture as capture
+import micasense.plotutils as plotutils
 
 
 def normalize(im, min=None, max=None):
@@ -51,15 +62,15 @@ def normalize(im, min=None, max=None):
 
 
 def local_normalize(im):
-    norm = img_as_ubyte(
-        normalize(im)
-    )  # TODO: mainly using this as a type conversion, but it's expensive
+    # TODO: mainly using this as a type conversion, but it's expensive
+    norm = img_as_ubyte(normalize(im))
     width, _ = im.shape
     disksize = int(width / 5)
     if disksize % 2 == 0:
         disksize = disksize + 1
     selem = disk(disksize)
-    norm2 = rank.equalize(norm, selem=selem)
+    # norm2 = rank.equalize(norm, selem=selem)  # `selem` is a deprecated argument
+    norm2 = rank.equalize(norm, footprint=selem)
     return norm2
 
 
@@ -72,20 +83,20 @@ def gradient(im, ksize=5):
     return grad
 
 
-def relatives_ref_band(capture):
-    for img in capture.images:
+def relatives_ref_band(ms_capture: capture.Capture) -> int:
+    for img in ms_capture.images:
         if img.rig_xy_offset_in_px() == (0, 0):
             return img.band_index()
     return 0
 
 
-def translation_from_ref(capture, band, ref=4):
-    x, y = capture.images[band].rig_xy_offset_in_px()
-    rx, ry = capture.images[ref].rig_xy_offset_in_px()
-    return
+def translation_from_ref(ms_capture: capture.Capture, band, ref=4) -> None:
+    x, y = ms_capture.images[band].rig_xy_offset_in_px()
+    rx, ry = ms_capture.images[ref].rig_xy_offset_in_px()
+    return None
 
 
-def align(pair):
+def align(pair: dict) -> dict:
     """Determine an alignment matrix between two images
     @input:
     Dictionary of the following form:
@@ -188,7 +199,6 @@ def align(pair):
             grad2 = gradient(gray2_pyr[level])
 
             if show_debug_images:
-                import micasense.plotutils as plotutils
 
                 plotutils.plotwithcolorbar(gray1_pyr[level], "ref level {}".format(level))
                 plotutils.plotwithcolorbar(
@@ -242,51 +252,72 @@ def default_warp_matrix(warp_mode):
         return np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
 
 
-def align_capture(
-    capture,
-    ref_index=1,
-    warp_mode=cv2.MOTION_HOMOGRAPHY,
-    max_iterations=2500,
-    epsilon_threshold=1e-9,
-    multithreaded=True,
-    debug=False,
-    pyramid_levels=None,
-):
-    """Align images in a capture using openCV
-    MOTION_TRANSLATION
-        sets a translational motion model; warp_matrix is 2x3 with the first 2x2 part
-        being the unity matrix and the rest two parameters being estimated.
-    MOTION_EUCLIDEAN
-        sets a Euclidean (rigid) transformation as motion model;
-        three parameters are estimated; warp_matrix is 2x3.
-    MOTION_AFFINE
-        sets an affine motion model (DEFAULT); six parameters are estimated;
-        warp_matrix is 2x3.
-    MOTION_HOMOGRAPHY
-        sets a homography as a motion model; eight parameters are estimated;
-        `warp_matrix` is 3x3.
-
-    best results will be AFFINE and HOMOGRAPHY, at the expense of speed
+def refine_alignment_warp(
+    ms_capture: capture.Capture,
+    ref_index: Optional[int] = 4,
+    warp_mode: Optional[int] = cv2.MOTION_HOMOGRAPHY,
+    max_iterations: Optional[int] = 2500,
+    epsilon_threshold: Optional[float] = 1e-9,
+    multithreaded: Optional[bool] = True,
+    debug: Optional[bool] = False,
+    pyramid_levels: Optional[Union[int, None]] = None,
+) -> Tuple[List[np.ndarray], List[dict]]:
     """
-    # Match other bands to this reference image (index into capture.images[])
+    Extract the alignment warp matrices and alignment pairs in capture using openCV
+
+    Parameters
+    ----------
+    ms_capture : capture.Capture
+        Capture object (a set of micasense.image.Images) taken by a single or
+        a pair (e.g. dual camera) of Micasense camera(s), which share the same
+        unique identifier (capture id).
+    ref_index : int [Optional]
+        For RedEdge-MX, ref_index=1 is best for alignment
+        For Dual Camera, ref_index=4 is best for alignment
+    warp_mode : int [Optional]
+        cv2.MOTION_TRANSLATION, 0
+            sets a translational motion model; warp_matrix is 2x3 with the
+            first 2x2 part being the unity matrix and the rest two parame-
+            ters being estimated.
+        cv2.MOTION_EUCLIDEAN, 1
+            sets a Euclidean (rigid) transformation as motion model; three
+            parameters are estimated; `warp_matrix` is 2x3.
+        cv2.MOTION_AFFINE, 2
+            sets an affine motion model (DEFAULT); six parameters are estim-
+            ated; `warp_matrix` is 2x3.
+        cv2.MOTION_HOMOGRAPHY, 3
+            sets a homography as a motion model; eight parameters are estim-
+            ated; `warp_matrix` is 3x3.
+        Note: best results will be AFFINE and HOMOGRAPHY, at the expense of speed
+    max_iterations : int [default = 2500]
+        Maximum iterations
+    epsilon_threshold : float [default = 1.0e-9]
+        Epsilon threshold
+    debug : bool [default = False]
+        Debug mode
+    pyramid_levels : int or None [default = None]
+        Pyramid level
+    """
+    # Match other bands to this reference image (index into ms_capture.images[])
     ref_img = (
-        capture.images[ref_index]
-        .undistorted(capture.images[ref_index].radiance())
+        ms_capture.images[ref_index]
+        .undistorted(ms_capture.images[ref_index].radiance())
         .astype("float32")
     )
 
-    if capture.has_rig_relatives():
-        warp_matrices_init = capture.get_warp_matrices(ref_index=ref_index)
+    if ms_capture.has_rig_relatives():
+        warp_matrices_init = ms_capture.get_warp_matrices(ref_index=ref_index)
     else:
-        warp_matrices_init = [default_warp_matrix(warp_mode)] * len(capture.images)
+        warp_matrices_init = [default_warp_matrix(warp_mode)] * len(ms_capture.images)
 
-    alignment_pairs = []
-    for i, img in enumerate(capture.images):
+    alignment_pairs = []  # this will be a list of dict (not used by LWIR)
+    for i, img in enumerate(ms_capture.images):
         if img.rig_relatives is not None:
             translations = img.rig_xy_offset_in_px()
         else:
             translations = (0, 0)
         if img.band_name != "LWIR":
+            # alignment dict for LWIR appended at the end
             alignment_pairs.append(
                 {
                     "warp_mode": warp_mode,
@@ -302,6 +333,7 @@ def align_capture(
                     "pyramid_levels": pyramid_levels,
                 }
             )
+    # warp_matrices creates a list of None with nelem = len(alignment_pairs)
     warp_matrices = [None] * len(alignment_pairs)
 
     # required to work across linux/mac/windows,
@@ -322,12 +354,13 @@ def align_capture(
     else:
         # Single-threaded alternative
         for pair in alignment_pairs:
-            mat = align(pair)
+            # align() optimizes/refines the warp matrices
+            mat = align(pair)  # mat is a dict
             warp_matrices[mat["match_index"]] = mat["warp_matrix"]
             print("Finished aligning band {}".format(mat["match_index"]))
 
-    if capture.images[-1].band_name == "LWIR":
-        img = capture.images[-1]
+    if ms_capture.images[-1].band_name == "LWIR":
+        img = ms_capture.images[-1]
         alignment_pairs.append(
             {
                 "warp_mode": warp_mode,
@@ -341,29 +374,29 @@ def align_capture(
                 "debug": debug,
             }
         )
-        warp_matrices.append(capture.get_warp_matrices(ref_index)[-1])
+        warp_matrices.append(ms_capture.get_warp_matrices(ref_index)[-1])
     return warp_matrices, alignment_pairs
 
 
 # apply homography to create an aligned stack
-def aligned_capture(
-    capture,
-    warp_matrices,
-    warp_mode,
-    cropped_dimensions,
-    match_index,
-    img_type="reflectance",
-    interpolation_mode=cv2.INTER_LANCZOS4,
-):
-    width, height = capture.images[0].size()
+def aligned_capture_backend(
+    ms_capture: capture.Capture,
+    warp_matrices: List[np.ndarray],
+    warp_mode: Optional[int] = cv2.MOTION_HOMOGRAPHY,
+    valid_ix: Optional[Union[List[int], None]] = None,
+    img_type: Optional[str] = "reflectance",
+    interpolation_mode: Optional[int] = cv2.INTER_LANCZOS4,
+    crop_edges: Optional[bool] = True,
+) -> np.ndarray:
+    width, height = ms_capture.images[0].size()
 
     im_aligned = np.zeros((height, width, len(warp_matrices)), dtype=np.float32)
 
     for i in range(0, len(warp_matrices)):
         if img_type == "reflectance":
-            img = capture.images[i].undistorted_reflectance()
+            img = ms_capture.images[i].undistorted_reflectance()
         else:
-            img = capture.images[i].undistorted_radiance()
+            img = ms_capture.images[i].undistorted_radiance()
 
         if warp_mode != cv2.MOTION_HOMOGRAPHY:
             im_aligned[:, :, i] = cv2.warpAffine(
@@ -379,10 +412,80 @@ def aligned_capture(
                 (width, height),
                 flags=interpolation_mode + cv2.WARP_INVERSE_MAP,
             )
-    (left, top, w, h) = tuple(int(i) for i in cropped_dimensions)
-    im_cropped = im_aligned[top : top + h, left : left + w][:]
 
-    return im_cropped
+    s_cix, s_rix, e_cix, e_rix = valid_ix
+    if not crop_edges:
+        # flag
+        im_aligned[:, 0 : s_cix + 1, :] = -1
+        im_aligned[:, e_cix:, :] = -1
+
+        im_aligned[0 : s_rix + 1, :, :] = -1
+        im_aligned[e_rix:, : , :] = -1
+
+        return im_aligned
+    else:
+        # crop the edges
+        return im_aligned[s_rix : e_rix + 1, s_cix : e_cix + 1, :]
+
+
+def aligned_capture(
+    ms_capture: capture.Capture,
+    warp_matrices: Optional[Union[List[float], List[np.ndarray], None]] = None,
+    img_type: Optional[Union[None, str]] = None,
+    warp_mode: Optional[int] = cv2.MOTION_HOMOGRAPHY,
+    irradiance_list: Optional[Union[List[float], None]] = None,
+    crop_edges: Optional[bool] = True,
+) -> np.ndarray:
+    """
+    Creates aligned Capture. Computes undistorted radiance
+    or reflectance images if necessary.
+
+    Parameters
+    ----------
+    irradiance_list: List of mean panel region irradiance.
+    warp_matrices: 2d List of warp matrices derived from Capture.get_warp_matrices()
+    img_type: str 'radiance' or 'reflectance' depending on image metadata.
+    warp_mode: OpenCV import.
+        Also known as warp_mode. MOTION_HOMOGRAPHY or MOTION_AFFINE.
+        For Altum images only use HOMOGRAPHY.
+
+    Returns
+    -------
+    np.ndarray with alignment changes
+    """
+    if (
+        img_type is None
+        and irradiance_list is None
+        and ms_capture.dls_irradiance() is None
+    ):
+        ms_capture.compute_undistorted_radiance()
+        img_type = "radiance"
+
+    elif img_type is None:
+        if irradiance_list is None:
+            # why 0 is appended to the dls irradiance??
+            irradiance_list = ms_capture.dls_irradiance() + [0]
+        ms_capture.compute_undistorted_reflectance(irradiance_list)
+        img_type = "reflectance"
+
+    if warp_matrices is None:
+        warp_matrices = ms_capture.get_warp_matrices()
+
+    valid_ix, _ = find_crop_bounds(
+        ms_capture=ms_capture, registration_transforms=warp_matrices, warp_mode=warp_mode
+    )
+
+    im_aligned = aligned_capture_backend(
+        ms_capture=ms_capture,
+        warp_matrices=warp_matrices,
+        warp_mode=warp_mode,
+        valid_ix=valid_ix,
+        img_type=img_type,
+        interpolation_mode=cv2.INTER_LANCZOS4,
+        crop_edges=crop_edges,
+    )
+
+    return im_aligned
 
 
 class BoundPoint(object):
@@ -410,24 +513,50 @@ class Bounds(object):
         return self.__str__()
 
 
-def find_crop_bounds(capture, registration_transforms, warp_mode=cv2.MOTION_HOMOGRAPHY):
-    """Compute the crop rectangle to be applied to a set of images after
-    registration such that no pixel in the resulting stack of images will
-    include a blank value for any of the bands
-
-    Args:
-
-    capture- an image capture
-
-    registration_transforms - a list of affine transforms applied to
-    register the image. It is required.
-
-    returns the left,top,w,h coordinates  of the smallest overlapping rectangle
-    and the mapped edges of the images
+def find_crop_bounds(
+    ms_capture: capture.Capture,
+    registration_transforms: Union[List[float], List[np.ndarray]],
+    warp_mode: Optional[int] = cv2.MOTION_HOMOGRAPHY,
+) -> Tuple[List[int], List[float]]:
     """
-    image_sizes = [image.size() for image in capture.images]
-    lens_distortions = [image.cv2_distortion_coeff() for image in capture.images]
-    camera_matrices = [image.cv2_camera_matrix() for image in capture.images]
+    Compute the crop rectangle to be applied to a set of images after
+    registration such  that no pixel in the resulting stack of images
+    will include a blank value for any of the bands
+
+    Parameters
+    ----------
+    ms_capture : capture.Capture
+        Capture object (a set of micasense.image.Images) taken by a single or
+        a pair (e.g. dual camera) of Micasense camera(s), which share the same
+        unique identifier (capture id).
+    registration_transforms : List[float] or List[np.ndarray]
+        A list of affine transforms applied to register the image.
+    warp_mode : int [Optional]
+        cv2.MOTION_TRANSLATION, 0
+            sets a translational motion model; warp_matrix is 2x3 with the
+            first 2x2 part being the unity matrix and the rest two parame-
+            ters being estimated.
+        cv2.MOTION_EUCLIDEAN, 1
+            sets a Euclidean (rigid) transformation as motion model; three
+            parameters are estimated; `warp_matrix` is 2x3.
+        cv2.MOTION_AFFINE, 2
+            sets an affine motion model (DEFAULT); six parameters are estim-
+            ated; `warp_matrix` is 2x3.
+        cv2.MOTION_HOMOGRAPHY, 3
+            sets a homography as a motion model; eight parameters are estim-
+            ated; `warp_matrix` is 3x3.
+
+    Returns
+    -------
+    valid_ix : List[int]
+        valid_ix the smallest overlapping rectangle
+        start_cix, start_rix, end_cix, end_rix = valid_ix
+    edges : List[float]
+        The mapped edges of the images
+    """
+    image_sizes = [image.size() for image in ms_capture.images]
+    lens_distortions = [image.cv2_distortion_coeff() for image in ms_capture.images]
+    camera_matrices = [image.cv2_camera_matrix() for image in ms_capture.images]
 
     bounds = [
         get_inner_rect(s, a, d, c, warp_mode=warp_mode)[0]
@@ -442,12 +571,20 @@ def find_crop_bounds(capture, registration_transforms, warp_mode=cv2.MOTION_HOMO
         )
     ]
     combined_bounds = get_combined_bounds(bounds, image_sizes[0])
+    print(combined_bounds)
 
-    left = np.ceil(combined_bounds.min.x)
-    top = np.ceil(combined_bounds.min.y)
-    width = np.floor(combined_bounds.max.x - combined_bounds.min.x)
-    height = np.floor(combined_bounds.max.y - combined_bounds.min.y)
-    return (left, top, width, height), edges
+
+    start_cix = int(np.ceil(combined_bounds.min.x))
+    start_rix = int(np.ceil(combined_bounds.min.y))
+    end_cix = int(np.floor(combined_bounds.max.x))
+    end_rix = int(np.floor(combined_bounds.max.y))
+    print(start_cix, start_rix ,end_cix ,end_rix)
+
+    # width = np.floor(combined_bounds.max.x - combined_bounds.min.x)
+    # height = np.floor(combined_bounds.max.y - combined_bounds.min.y)
+    # return [left, top, width, height], edges
+
+    return [start_cix, start_rix, end_cix, end_rix], edges
 
 
 def get_inner_rect(
@@ -580,3 +717,208 @@ def map_points(
         return new_pts[0]
     else:
         return new_pts[:, 0, :]
+
+
+def save_capture_as_stack(
+    ms_capture: capture.Capture,
+    im_aligned: np.ndarray,
+    out_filename: Union[str, Path],
+    sort_by_wavelength: Optional[bool] = False,
+    photometric: Optional[str] = "MINISBLACK",
+) -> None:
+    """
+    Output the Images in the Capture object as GTiff image stack.
+    :param out_filename: str system file path
+    :param sort_by_wavelength: boolean
+    :param photometric: str GDAL argument for GTiff color matching
+    """
+    rows, cols, bands = im_aligned.shape
+    driver = GetDriverByName("GTiff")
+
+    out_raster = driver.Create(
+        out_filename,
+        cols,
+        rows,
+        bands,
+        GDT_UInt16,
+        options=[
+            "INTERLEAVE=BAND",
+            "COMPRESS=DEFLATE",
+            f"PHOTOMETRIC={photometric}",
+        ],
+    )
+    try:
+        if out_raster is None:
+            raise IOError("could not load gdal GeoTiff driver")
+
+        if sort_by_wavelength:
+            eo_list = list(
+                np.argsort(
+                    np.array(ms_capture.center_wavelengths())[ms_capture.eo_indices()]
+                )
+            )
+        else:
+            eo_list = ms_capture.eo_indices()
+
+        for out_band, in_band in enumerate(eo_list):
+            out_band = out_raster.GetRasterBand(out_band + 1)
+            out_data = im_aligned[:, :, in_band]
+            out_data[out_data < 0] = 0
+
+            # limit reflectance data to 200% to allow some specular reflections
+            out_data[out_data > 2] = 2
+
+            # scale reflectance images so 100% = 32768
+            out_band.WriteArray(out_data * 32768)
+
+            out_band.FlushCache()
+
+        for out_band, in_band in enumerate(ms_capture.lw_indices()):
+            out_band = out_raster.GetRasterBand(len(eo_list) + out_band + 1)
+            # scale data from float degC to back to centi-Kelvin to fit into uint16
+            out_data = (im_aligned[:, :, in_band] + 273.15) * 100
+            out_data[out_data < 0] = 0
+            out_data[out_data > 65535] = 65535
+            out_band.WriteArray(out_data)
+            out_band.FlushCache()
+    finally:
+        out_raster = None
+
+
+def save_capture_as_rgb(
+    im_aligned: np.ndarray,
+    out_filename: Union[str, Path],
+    gamma: Optional[float] = 1.4,
+    downsample: Optional[int] = 1,
+    white_balance: Optional[str] = "norm",
+    hist_min_percent: Optional[float] = 0.5,
+    hist_max_percent: Optional[float] = 99.5,
+    sharpen: Optional[bool] = True,
+    rgb_band_indices: Optional[Tuple[int]] = (2, 1, 0),
+):
+    """
+    Output the Images in the Capture object as RGB.
+    Parameters
+    ----------
+    out_filename: str system file path
+    gamma: float gamma correction
+    downsample: int downsample for cv2.resize()
+    white_balance: str (default="norm")
+        Specifies whether to normalize across bands using hist_min_percent
+        and hist_max_percent. Else this parameter is ignored.
+    hist_min_percent: float for min histogram stretch
+    hist_max_percent: float for max histogram stretch
+    sharpen: boolean
+    rgb_band_indices: List band order
+    """
+    im_display = np.zeros(im_aligned.shape, dtype=np.float32)
+
+    # modify these percentiles to adjust contrast.
+    # For many images, 0.5 and 99.5 are good values
+    im_min = np.percentile(im_aligned[:, :, rgb_band_indices].flatten(), hist_min_percent)
+    im_max = np.percentile(im_aligned[:, :, rgb_band_indices].flatten(), hist_max_percent)
+
+    for i in rgb_band_indices:
+        # For rgb true color, we usually want to use the same min and max
+        # scaling across the 3 bands to maintain the "white balance" of
+        # the calibrated image
+        if white_balance == "norm":
+            im_display[:, :, i] = normalize(im_aligned[:, :, i], im_min, im_max)
+        else:
+            im_display[:, :, i] = normalize(im_aligned[:, :, i])
+
+    rgb = im_display[:, :, rgb_band_indices]
+    rgb = cv2.resize(
+        rgb,
+        None,
+        fx=1 / downsample,
+        fy=1 / downsample,
+        interpolation=cv2.INTER_AREA,
+    )
+
+    if sharpen:
+        gaussian_rgb = cv2.GaussianBlur(rgb, (9, 9), 10.0)
+        gaussian_rgb[gaussian_rgb < 0] = 0
+        gaussian_rgb[gaussian_rgb > 1] = 1
+        unsharp_rgb = cv2.addWeighted(rgb, 1.5, gaussian_rgb, -0.5, 0)
+        unsharp_rgb[unsharp_rgb < 0] = 0
+        unsharp_rgb[unsharp_rgb > 1] = 1
+    else:
+        unsharp_rgb = rgb
+
+    # Apply a gamma correction to make the render appear
+    # closer to what our eyes would see
+    if gamma != 0:
+        gamma_corr_rgb = unsharp_rgb ** (1.0 / gamma)
+        imageio.imwrite(out_filename, (255 * gamma_corr_rgb).astype("uint8"))
+    else:
+        imageio.imwrite(out_filename, (255 * unsharp_rgb).astype("uint8"))
+
+
+def save_thermal_over_rgb(
+    ms_capture: capture.Capture,
+    im_aligned: np.ndarray,
+    out_filename: Union[str, Path],
+    fig_size: Optional[Tuple[int]] = (30, 23),
+    lw_index: Optional[int] = None,
+    hist_min_percent: Optional[float] = 0.2,
+    hist_max_percent: Optional[float] = 99.8,
+):
+    """
+    Output the Images in the Capture object as thermal over RGB.
+    :param out_filename: str system file path.
+    :param fig_size: Tuple dimensions of the figure.
+    :param lw_index: int Index of LWIR Image in Capture.
+    :param hist_min_percent: float Minimum histogram percentile.
+    :param hist_max_percent: float Maximum histogram percentile.
+    """
+    # by default we don't mask the thermal, since it's native
+    # resolution is much lower than the MS
+    if lw_index is None:
+        lw_index = ms_capture.lw_indices()[0]
+    masked_thermal = im_aligned[:, :, lw_index]
+
+    im_display = np.zeros(
+        (im_aligned.shape[0], im_aligned.shape[1], 3),
+        dtype=np.float32,
+    )
+    rgb_band_indices = [
+        ms_capture.band_names_lower().index("red"),
+        ms_capture.band_names_lower().index("green"),
+        ms_capture.band_names_lower().index("blue"),
+    ]
+
+    # for rgb true color, we usually want to use the same min and max
+    # scaling across the 3 bands to maintain the "white balance" of
+    # the calibrated image
+
+    # modify these percentiles to adjust contrast
+    im_min = np.percentile(im_aligned[:, :, rgb_band_indices].flatten(), hist_min_percent)
+
+    # for many images, 0.5 and 99.5 are good values
+    im_max = np.percentile(im_aligned[:, :, rgb_band_indices].flatten(), hist_max_percent)
+
+    for dst_band, src_band in enumerate(rgb_band_indices):
+        im_display[:, :, dst_band] = normalize(im_aligned[:, :, src_band], im_min, im_max)
+
+    # Compute a histogram
+    min_display_therm = np.percentile(masked_thermal, hist_min_percent)
+    max_display_therm = np.percentile(masked_thermal, hist_max_percent)
+
+    fig, _ = plotutils.plot_overlay_withcolorbar(
+        im_display,
+        masked_thermal,
+        figsize=fig_size,
+        title="Temperature over True Color",
+        vmin=min_display_therm,
+        vmax=max_display_therm,
+        overlay_alpha=0.25,
+        overlay_colormap="jet",
+        overlay_steps=16,
+        display_contours=True,
+        contour_steps=16,
+        contour_alpha=0.4,
+        contour_fmt="%.0fC",
+        show=False,
+    )
+    fig.savefig(out_filename)

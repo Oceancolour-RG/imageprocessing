@@ -109,7 +109,9 @@ def vignette_map(
     return vignette, x, y
 
 
-def correct_lens_distortion(image: np.ndarray, meta: metadata.MetadataFromExif) -> np.ndarray:
+def correct_lens_distortion(
+    image: np.ndarray, meta: metadata.MetadataFromExif
+) -> np.ndarray:
     # get lens distortion parameters
     distortion_params = np.array(meta.distortion_parameters())
 

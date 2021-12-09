@@ -23,12 +23,15 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
-import pytest
 import os
+import cv2
+import pytest
+import imageio
 import numpy as np
 
-import micasense.capture as capture
 import micasense.image as image
+import micasense.capture as capture
+import micasense.imageutils as imageutils
 
 
 def test_from_images(panel_rededge_file_list):
@@ -266,58 +269,80 @@ def test_altum_panels(panel_altum_capture):
 
 
 @pytest.fixture()
-def aligned_altum_capture(non_panel_altum_capture):
-    non_panel_altum_capture.create_aligned_capture(img_type="radiance")
-    return non_panel_altum_capture
+def aligned_altum_image(non_panel_altum_capture: capture.Capture) -> np.ndarray:
+    # note non_panel_altum_capture defined in conftest.py
+    im_aligned = imageutils.aligned_capture(
+        ms_capture=non_panel_altum_capture,
+        warp_matrices=None,
+        img_type="radiance",
+        warp_mode=cv2.MOTION_HOMOGRAPHY,
+        irradiance_list=None,
+        crop_edges=True,
+    )
+    return im_aligned
 
 
-def test_stack_export(aligned_altum_capture, tmpdir):
+def test_stack_export(
+    non_panel_altum_capture: capture.Capture, aligned_altum_image: np.ndarray, tmpdir: str
+):
     pathstr = str(tmpdir.join("test_bgrent.tiff"))
-    aligned_altum_capture.save_capture_as_stack(pathstr)
+    imageutils.save_capture_as_stack(
+        ms_capture=non_panel_altum_capture,
+        im_aligned=aligned_altum_image,
+        out_filename=pathstr,
+    )
     assert os.path.exists(pathstr)
     if tmpdir.check():
         tmpdir.remove()
 
 
-def test_rgb_jpg(aligned_altum_capture, tmpdir):
+def test_rgb_jpg(aligned_altum_image: np.ndarray, tmpdir: str):
     pathstr = str(tmpdir.join("test_rgb.jpg"))
-    aligned_altum_capture.save_capture_as_rgb(pathstr)
+    imageutils.save_capture_as_rgb(im_aligned=aligned_altum_image, out_filename=pathstr)
     assert os.path.exists(pathstr)
     if tmpdir.check():
         tmpdir.remove()
 
 
-def test_rgb_png(aligned_altum_capture, tmpdir):
+def test_rgb_png(aligned_altum_image: np.ndarray, tmpdir: str):
     pathstr = str(tmpdir.join("test_rgb.png"))
-    aligned_altum_capture.save_capture_as_rgb(pathstr)
+    imageutils.save_capture_as_rgb(im_aligned=aligned_altum_image, out_filename=pathstr)
     assert os.path.exists(pathstr)
     if tmpdir.check():
         tmpdir.remove()
 
 
-def test_rgb_jpg_decimation(aligned_altum_capture, tmpdir):
-    import imageio
+def test_rgb_jpg_decimation(aligned_altum_image: np.ndarray, tmpdir: str):
 
     decimations = [2, 5, 8]
     for decimation in decimations:
         pathstr = str(tmpdir.join("test_rgb_{}x.jpg".format(decimation)))
-        aligned_altum_capture.save_capture_as_rgb(pathstr, downsample=decimation)
+        imageutils.save_capture_as_rgb(
+            im_aligned=aligned_altum_image, out_filename=pathstr, downsample=decimation
+        )
         assert os.path.exists(pathstr)
         img = imageio.imread(pathstr)
         assert img.shape[0] == round(
-            float(aligned_altum_capture.aligned_shape()[0]) / float(decimation)
+            float(aligned_altum_image.shape[0]) / float(decimation)
         )
         assert img.shape[1] == round(
-            float(aligned_altum_capture.aligned_shape()[1]) / float(decimation)
+            float(aligned_altum_image.shape[1]) / float(decimation)
         )
 
     if tmpdir.check():
         tmpdir.remove()
 
 
-def test_save_thermal_over_rgb(aligned_altum_capture, tmpdir):
+def test_save_thermal_over_rgb(
+    non_panel_altum_capture: capture.Capture, aligned_altum_image: np.ndarray, tmpdir: str
+):
     pathstr = str(tmpdir.join("test_thermal_rgb.png"))
-    aligned_altum_capture.save_thermal_over_rgb(pathstr)
+    imageutils.save_thermal_over_rgb(
+        ms_capture=non_panel_altum_capture,
+        im_aligned=aligned_altum_image,
+        out_filename=pathstr,
+    )
+
     assert os.path.exists(pathstr)
     if tmpdir.check():
         tmpdir.remove()

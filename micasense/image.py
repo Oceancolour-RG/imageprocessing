@@ -33,7 +33,8 @@ import numpy as np
 import micasense.load_yaml as ms_yaml
 import micasense.plotutils as plotutils
 import micasense.metadata2 as metadata
-#import micasense.metadata as metadata
+
+# import micasense.metadata as metadata
 import micasense.dls as dls
 
 from os.path import isfile

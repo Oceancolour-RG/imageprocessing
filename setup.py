@@ -49,6 +49,7 @@ setup(
     ],
     install_requires=[
         "six>=1.16.0",  # requirement of pathlib2
+        "imageio>=2.13.3",
         "requests>=2.26.0",
         "numpy>=1.21.3",
         "opencv-python>=4.5.4.60",
@@ -63,5 +64,6 @@ setup(
         "tqdm>=4.62.3",
         "pathlib2>=2.3.6",
         "pyyaml>=6.0",
+        "rasterio>=1.2.10",
     ],
 )

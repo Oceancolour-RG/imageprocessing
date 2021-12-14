@@ -666,14 +666,31 @@ class MetadataFromDict(object):
         extract the 35mm scale factor, sf[35], such that,
         35 mm equivalent focal length = sf[35] * focal_length
         """
-        if self.camera_model() == "Altum":
-            raise Exception("Have yet to write code for Altum")
-        else:
-            pxl_mm = 3.75 / 1000.0  # pixel size in mm
-            w, h = self.image_size()
-            diag_img = ((w * pxl_mm) ** 2 + (h * pxl_mm) ** 2) ** 0.5
+
+        def __calc_backend(pxl_um: float, ncols: int, nrows: int) -> float:
+            """
+            Backend calculation of the 35 mm scale factor
+
+            Parameters
+            ----------
+            pxl_um : pixel size (micrometers, um) [float]
+            ncols : image width (or number of image columns) [int]
+            nrows : image height (or number of image rows) [int]
+            """
+            pxl_mm = pxl_um / 1000.0  # pixel size in mm
+            diag_img = ((ncols * pxl_mm) ** 2 + (nrows * pxl_mm) ** 2) ** 0.5
             diag_35mm = ((36.0) ** 2 + (24.0) ** 2) ** 0.5
             return diag_35mm / diag_img
+
+        w, h = self.image_size()
+        pxl_size = 3.75  # micrometers
+        if self.camera_model() == "Altum":
+            if self.band_name().lower() == "lwir":
+                pxl_size = 12.0  # micrometers
+            else:
+                pxl_size = 3.45
+
+        return __calc_backend(pxl_size, w, h)
 
     def focal_length_35_mm_eq(self) -> float:
         # pyexiv2 cannot access the Composite keys including:

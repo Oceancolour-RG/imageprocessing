@@ -30,10 +30,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import math
 import numpy as np
-
 from pathlib2 import Path
 from os.path import isfile
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Tuple
+from pysolar.solar import get_altitude, get_azimuth
 
 import micasense.image as image
 import micasense.load_yaml as ms_yaml
@@ -267,6 +267,12 @@ class Capture(object):
     def utc_time(self):
         """Returns a timezone-aware datetime object of the capture time."""
         return self.images[0].utc_time
+
+    def solar_geoms(self) -> Tuple[float, float]:
+        """Returns the solar zenith and azimuth at the time of capture"""
+        lat, lon, _ = self.location()
+        dt = self.utc_time()
+        return 90.0 - get_altitude(lat, lon, dt), get_azimuth(lat, lon, dt)
 
     def clear_image_data(self):
         """

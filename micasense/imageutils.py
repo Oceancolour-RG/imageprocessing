@@ -25,6 +25,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import cv2
 import imageio
+import warnings
+import rasterio
 import numpy as np
 import multiprocessing
 
@@ -33,9 +35,6 @@ from skimage.morphology import disk
 from skimage.util import img_as_ubyte
 from skimage.filters import rank, gaussian
 from typing import Union, List, Tuple, Optional
-
-# TODO: Change to Rasterio
-from osgeo.gdal import GetDriverByName, GDT_UInt16
 
 
 import micasense.capture as capture
@@ -420,7 +419,7 @@ def aligned_capture_backend(
         im_aligned[:, e_cix:, :] = -1
 
         im_aligned[0 : s_rix + 1, :, :] = -1
-        im_aligned[e_rix:, : , :] = -1
+        im_aligned[e_rix:, :, :] = -1
 
         return im_aligned
     else:
@@ -571,14 +570,11 @@ def find_crop_bounds(
         )
     ]
     combined_bounds = get_combined_bounds(bounds, image_sizes[0])
-    print(combined_bounds)
-
 
     start_cix = int(np.ceil(combined_bounds.min.x))
     start_rix = int(np.ceil(combined_bounds.min.y))
     end_cix = int(np.floor(combined_bounds.max.x))
     end_rix = int(np.floor(combined_bounds.max.y))
-    print(start_cix, start_rix ,end_cix ,end_rix)
 
     # width = np.floor(combined_bounds.max.x - combined_bounds.min.x)
     # height = np.floor(combined_bounds.max.y - combined_bounds.min.y)
@@ -723,66 +719,133 @@ def save_capture_as_stack(
     ms_capture: capture.Capture,
     im_aligned: np.ndarray,
     out_filename: Union[str, Path],
-    sort_by_wavelength: Optional[bool] = False,
+    img_type: Optional[str] = "reflectance",
+    sort_by_wavelength: Optional[bool] = True,
     photometric: Optional[str] = "MINISBLACK",
+    compression: Optional[str] = "lzw",
 ) -> None:
+    warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
     """
-    Output the Images in the Capture object as GTiff image stack.
-    :param out_filename: str system file path
-    :param sort_by_wavelength: boolean
-    :param photometric: str GDAL argument for GTiff color matching
+    Write a geotif (without a defined Affine and CRS projection)
+    of a stack of aligned/unaligned images.
+
+    Parameters
+    ----------
+    ms_capture : capture.Capture
+        Capture object (a set of micasense.image.Images) taken by a single or
+        a pair (e.g. dual camera) of Micasense camera(s), which share the same
+        unique identifier (capture id).
+    im_aligned : np.ndarray, (dtype=np.float32)
+        The stack of aligned (or unaligned) images.
+    out_filename : str or Path
+        The output geotif filename
+    sort_by_wavelength : bool [Optional]
+        Specifies whether to save the image stack with ordered
+        wavelength (ascending order), default = True
+    photometric : str [Optional]
+        GDAL argument (see https://gdal.org/drivers/raster/gtiff.html)
+    compression : str [Optional]
+        "jpeg", "lzw", "packbits", "deflate", "ccittrle", "ccittfax3",
+         "ccittfax4", "lzma", "zstd", "lerc", "lerc_deflate", "lerc_zstd",
+         "webp", "jxl", "none"
+         see https://gdal.org/drivers/raster/gtiff.html for information
+         on the different compression algorithms. Note though, PACKBITS
+         DEFLATE and LZW are lossless approaches. Default is lzw
     """
-    rows, cols, bands = im_aligned.shape
-    driver = GetDriverByName("GTiff")
+    nrows, ncols, nbands = im_aligned.shape
+    nodata = 0
+    odtype = np.dtype(np.uint16)
+    vis_sfactor = None
+    thermal_sfactor, thermal_offset = None, None
 
-    out_raster = driver.Create(
-        out_filename,
-        cols,
-        rows,
-        bands,
-        GDT_UInt16,
-        options=[
-            "INTERLEAVE=BAND",
-            "COMPRESS=DEFLATE",
-            f"PHOTOMETRIC={photometric}",
-        ],
-    )
-    try:
-        if out_raster is None:
-            raise IOError("could not load gdal GeoTiff driver")
+    wavel = ms_capture.center_wavelengths()
+    if sort_by_wavelength:
+        eo_list = list(np.argsort(np.array(wavel)[ms_capture.eo_indices()]))
+    else:
+        eo_list = ms_capture.eo_indices()
 
-        if sort_by_wavelength:
-            eo_list = list(
-                np.argsort(
-                    np.array(ms_capture.center_wavelengths())[ms_capture.eo_indices()]
-                )
+    # To conserve memory, the geotiff will be saved as uint16
+    meta = {
+        "driver": "GTiff",
+        "dtype": "uint16",
+        "nodata": nodata,
+        "width": ncols,
+        "height": nrows,
+        "count": nbands,
+    }
+    blockxsize = int(ncols) // 5
+    blockysize = int(nrows) // 5
+
+    with rasterio.open(
+        str(out_filename),
+        "w",
+        **meta,
+        compress=compression,
+        tiled=True,
+        blockxsize=blockxsize,
+        blockysize=blockysize,
+        interleave="band",  # equivalent to band-sequential interleave
+    ) as dst:
+
+        # iterate through the visible bands
+        vis_wavel = ""
+        for out_bix, in_bix in enumerate(eo_list):
+            vis_sfactor = np.iinfo(odtype).max
+            bandim = im_aligned[:, :, in_bix]
+
+            # identify flagged pixels (<=0.0) if img_type == "reflectance"
+            # then pixels with values > 1.0 will also be masked.
+            if img_type == "reflectance":
+                flagged_ix = (bandim <= 0) | (bandim > 1.0)
+            else:
+                flagged_ix = bandim <= 0
+
+            bandim[flagged_ix] = 0.0
+
+            # convert bandim from float32 to uint16.
+            dst.write(
+                np.array(bandim * vis_sfactor, order="C", dtype=odtype),
+                indexes=out_bix + 1,
             )
-        else:
-            eo_list = ms_capture.eo_indices()
+            dst.set_band_description(out_bix + 1, f"{wavel[in_bix]} (Band{in_bix+1:02d})")
+            vis_wavel += f"{wavel[in_bix]},"
+        if vis_wavel.endswith(","):
+            vis_wavel = vis_wavel[0:-1]
 
-        for out_band, in_band in enumerate(eo_list):
-            out_band = out_raster.GetRasterBand(out_band + 1)
-            out_data = im_aligned[:, :, in_band]
-            out_data[out_data < 0] = 0
+        # iterate through the thermal bands
+        for out_bix, in_bix in enumerate(ms_capture.lw_indices()):
+            thermal_sfactor = 100.0
+            thermal_offset = 273.15
+            bandim = (im_aligned[:, :, in_bix] + thermal_offset) * thermal_sfactor
+            bandim[bandim < 0] = 0
+            bandim[bandim > np.iinfo(odtype).max] = np.iinfo(odtype).max
 
-            # limit reflectance data to 200% to allow some specular reflections
-            out_data[out_data > 2] = 2
+            dst.write(bandim.asdtype(odtype), indexes=len(eo_list) + out_bix + 1)
+            # dst.set_band_description(len(eo_list) + out_bix + 1, f"LWIR {out_bix+1}")
 
-            # scale reflectance images so 100% = 32768
-            out_band.WriteArray(out_data * 32768)
+        # NOTE: The following tags are written into the EXIF/XMP
+        #       "GDAL Metadata" metadata tag.  Annoyingly, these
+        #       tags are not accessible with pyexiv2, but can be
+        #       accessed with rasterio;
+        #       >>> with rasterio.open(tfile, "r") as src:
+        #       >>>     custom_tags = src.tags()  # dict
+        #       >>> solar_zenith = custom_tags["solarzenith"]  # float
+        if vis_sfactor:
+            dst.update_tags(vis_sfactor=vis_sfactor)
+        if vis_wavel:
+            dst.update_tags(vis_wavel=vis_wavel)
+        if thermal_sfactor:
+            dst.update_tags(thermal_sfactor=thermal_sfactor)
+        if thermal_offset:
+            dst.update_tags(thermal_offset=thermal_offset)
 
-            out_band.FlushCache()
+        szen, sazi = ms_capture.solar_geoms()
 
-        for out_band, in_band in enumerate(ms_capture.lw_indices()):
-            out_band = out_raster.GetRasterBand(len(eo_list) + out_band + 1)
-            # scale data from float degC to back to centi-Kelvin to fit into uint16
-            out_data = (im_aligned[:, :, in_band] + 273.15) * 100
-            out_data[out_data < 0] = 0
-            out_data[out_data > 65535] = 65535
-            out_band.WriteArray(out_data)
-            out_band.FlushCache()
-    finally:
-        out_raster = None
+        dst.update_tags(solarzenith=szen)
+        dst.update_tags(solarazimuth=sazi)
+
+    if not Path(out_filename).exists():
+        raise Exception(f"issue with writing {out_filename}")
 
 
 def save_capture_as_rgb(

@@ -30,7 +30,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import math
 import numpy as np
-from pathlib2 import Path
+from pathlib import Path
 from os.path import isfile
 from typing import Union, List, Optional, Tuple
 from pysolar.solar import get_altitude, get_azimuth
@@ -53,7 +53,7 @@ class Capture(object):
     def __init__(
         self,
         images: Union[image.Image, List[image.Image]],
-        panel_corners: Optional[Union[List[int], None]] = None,
+        panel_corners: Optional[List[int]] = None,
     ):
         """
         Parameters
@@ -65,7 +65,7 @@ class Capture(object):
             from_file_list(List[str] or List[Path]), or from_yaml(str
             or Path) methods. Captures are also created automatically
             using ImageSet.from_directory()
-        panel_corners: List[int] or None [Optional]
+        panel_corners: List[int] [Optional]
             List of int coordinates
             e.g.
             [
@@ -105,7 +105,7 @@ class Capture(object):
         else:
             self.panel_corners = panel_corners
 
-    def set_panel_corners(self, panel_corners):
+    def set_panel_corners(self, panel_corners: List[int]):
         """
         Define panel corners by hand.
         :param panel_corners: 2d List of int coordinates.
@@ -116,7 +116,7 @@ class Capture(object):
         self.panels = None
         self.detect_panels()
 
-    def append_image(self, img):
+    def append_image(self, img: np.ndarray):
         """
         Add an Image to the Capture.
         :param img: An Image object.
@@ -127,14 +127,14 @@ class Capture(object):
         self.images.append(img)
         self.images.sort()
 
-    def append_images(self, images):
+    def append_images(self, images: List[np.ndarray]):
         """
         Add multiple Images to the Capture.
         :param images: List of Image objects.
         """
         [self.append_image(img) for img in images]
 
-    def append_file(self, filename):
+    def append_file(self, filename: str):
         """
         Add an Image to the Capture using a file path.
         :param filename: str system file path.
@@ -192,7 +192,7 @@ class Capture(object):
         -------
         Capture object.
         """
-        d = ms_yaml.load_all(yaml_file)
+        d = ms_yaml.load_all(yaml_file=yaml_file)
 
         images = [
             image.Image(
@@ -304,7 +304,7 @@ class Capture(object):
         """Returns true if DLS metadata is present in the images."""
         return self.images[0].dls_present
 
-    def dls_irradiance_raw(self):
+    def dls_irradiance_raw(self) -> List[float]:
         """Returns a list of the raw DLS measurements from the image metadata."""
         return [img.spectral_irradiance for img in self.images]
 
@@ -315,13 +315,13 @@ class Capture(object):
         """
         return [img.horizontal_irradiance for img in self.images]
 
-    def direct_irradiance(self):
+    def direct_irradiance(self) -> List[float]:
         """
         Returns a list of the DLS irradiance from the direct source in W/m^2/nm
         """
         return [img.direct_irradiance for img in self.images]
 
-    def scattered_irradiance(self):
+    def scattered_irradiance(self) -> List[float]:
         """
         Returns a list of the DLS scattered irradiance
         from the direct source in W/m^2/nm
@@ -353,7 +353,7 @@ class Capture(object):
             plot_type="Undistorted Radiance",
         )
 
-    def plot_undistorted_reflectance(self, irradiance_list):
+    def plot_undistorted_reflectance(self, irradiance_list: List[float]) -> None:
         """
         Compute (if necessary) and plot reflectances given a list
         of irradiances.
@@ -369,18 +369,12 @@ class Capture(object):
             plot_type="Undistorted Reflectance",
         )
 
-    def compute_radiance(self):
-        """
-        Compute Image radiances.
-        :return: None
-        """
+    def compute_radiance(self) -> None:
+        """Compute Image radiances"""
         [img.radiance() for img in self.images]
 
-    def compute_undistorted_radiance(self):
-        """
-        Compute Image undistorted radiance.
-        :return: None
-        """
+    def compute_undistorted_radiance(self) -> None:
+        """Compute Image undistorted radiance."""
         [img.undistorted_radiance() for img in self.images]
 
     def compute_reflectance(self, irradiance_list=None, force_recompute=True) -> None:
@@ -437,25 +431,25 @@ class Capture(object):
                 for img in self.images
             ]
 
-    def eo_images(self):
+    def eo_images(self) -> List[np.ndarray]:
         """Returns a list of the EO Images in the Capture."""
         return [img for img in self.images if img.band_name != "LWIR"]
 
-    def lw_images(self):
+    def lw_images(self) -> List[np.ndarray]:
         """Returns a list of the longwave infrared Images in the Capture."""
         return [img for img in self.images if img.band_name == "LWIR"]
 
-    def eo_indices(self):
+    def eo_indices(self) -> List[int]:
         """Returns a list of the indexes of the EO Images in the Capture."""
         return [index for index, img in enumerate(self.images) if img.band_name != "LWIR"]
 
-    def lw_indices(self):
+    def lw_indices(self) -> List[int]:
         """
         Returns a list of the indexes of the longwave infrared Images in the Capture
         """
         return [index for index, img in enumerate(self.images) if img.band_name == "LWIR"]
 
-    def reflectance(self, irradiance_list):
+    def reflectance(self, irradiance_list: List[float]) -> List[np.ndarray]:
         """
         Compute reflectance Images.
 
@@ -474,7 +468,7 @@ class Capture(object):
         lw_imgs = [img.reflectance() for i, img in enumerate(self.lw_images())]
         return eo_imgs + lw_imgs
 
-    def undistorted_reflectance(self, irradiance_list):
+    def undistorted_reflectance(self, irradiance_list: List[float]) -> List[np.ndarray]:
         """
         Compute undistorted reflectance Images.
 
@@ -508,7 +502,7 @@ class Capture(object):
         expected_panels = sum(str(img.band_name).upper() != "LWIR" for img in self.images)
         return self.detect_panels() == expected_panels
 
-    def panel_raw(self):
+    def panel_raw(self) -> List[float]:
         """Return a list of mean panel region values for raw images."""
         if self.panels is None:
             if not self.panels_in_all_expected_images():
@@ -519,7 +513,7 @@ class Capture(object):
             raw_list.append(mean)
         return raw_list
 
-    def panel_radiance(self):
+    def panel_radiance(self) -> List[float]:
         """Return a list of mean panel region values for converted radiance Images."""
         if self.panels is None:
             if not self.panels_in_all_expected_images():
@@ -530,7 +524,7 @@ class Capture(object):
             radiance_list.append(mean)
         return radiance_list
 
-    def panel_irradiance(self, reflectances=None):
+    def panel_irradiance(self, reflectances=None) -> List[float]:
         """Return a list of mean panel region values for irradiance values."""
         if self.panels is None:
             if not self.panels_in_all_expected_images():
@@ -547,9 +541,8 @@ class Capture(object):
             irradiance_list.append(mean_irr)
         return irradiance_list
 
-    def panel_reflectance(
-        self, panel_refl_by_band=None
-    ):  # FIXME: panel_refl_by_band parameter isn't used?
+    def panel_reflectance(self, panel_refl_by_band=None) -> List[float]:
+        # FIXME: panel_refl_by_band parameter isn't used?
         """Return a list of mean panel reflectance values."""
         if self.panels is None:
             if not self.panels_in_all_expected_images():
@@ -561,7 +554,7 @@ class Capture(object):
             reflectance_list.append(mean_refl)
         return reflectance_list
 
-    def panel_albedo(self):
+    def panel_albedo(self) -> Union[List[float], None]:
         """Return a list of panel reflectance values from metadata."""
         if self.panels_in_all_expected_images():
             albedos = [panel.reflectance_from_panel_serial() for panel in self.panels]
@@ -571,7 +564,7 @@ class Capture(object):
             albedos = None
         return albedos
 
-    def detect_panels(self):
+    def detect_panels(self) -> int:
         """Detect reflectance panels in the Capture, and return a count."""
 
         if self.panels is not None and self.detected_panel_count == len(self.images):
@@ -600,7 +593,7 @@ class Capture(object):
             [p.plot_image() for p in self.panels], plot_type="Panels", color_bar=False
         )
 
-    def set_external_rig_relatives(self, external_rig_relatives):
+    def set_external_rig_relatives(self, external_rig_relatives) -> None:
         """
         Set external rig relatives.
         :param external_rig_relatives: TODO: Write this parameter docstring
@@ -609,7 +602,7 @@ class Capture(object):
         for i, img in enumerate(self.images):
             img.set_external_rig_relatives(external_rig_relatives[str(i)])
 
-    def has_rig_relatives(self):
+    def has_rig_relatives(self) -> bool:
         """
         Check if Images in Capture have rig relatives.
         :return: boolean True if all Images have rig relatives metadata.
@@ -619,7 +612,7 @@ class Capture(object):
                 return False
         return True
 
-    def get_warp_matrices(self, ref_index=None) -> List[float]:
+    def get_warp_matrices(self, ref_index=None) -> List[np.ndarray]:
         """
         Get warp matrices. Used in imageutils.refine_alignment_warp
 

@@ -38,7 +38,7 @@ import micasense.metadata2 as metadata
 import micasense.dls as dls
 
 from os.path import isfile
-from pathlib2 import Path
+from pathlib import Path
 from typing import Optional, Union, Tuple
 
 
@@ -67,8 +67,8 @@ class Image(object):
     def __init__(
         self,
         image_path: Union[Path, str],
-        yaml_path: Optional[Union[Path, str, None]] = None,
-        metadata_dict: Optional[Union[dict, None]] = None,
+        yaml_path: Optional[Union[Path, str]] = None,
+        metadata_dict: Optional[dict] = None,
     ):
         """
         Create an Image object from a single band.
@@ -83,7 +83,7 @@ class Image(object):
             A yaml file is useful, for instance, if a set of image
             calibration or vignetting coefficients are used that are
             different from that in the tif exif metadata.
-        metadata_dict : dict or None[Optional]
+        metadata_dict : dict [Optional]
             The metadata dictionary of the image_path
 
         Notes
@@ -101,7 +101,7 @@ class Image(object):
             # specified so that metadata_dict can be loaded.
             if yaml_path and isfile(yaml_path):
                 # load yaml as metadata_dict
-                metadata_dict = ms_yaml.load_all(yaml_path)
+                metadata_dict = ms_yaml.load_all(yaml_file=yaml_path)
 
         self.path = image_path
         if metadata_dict is None:
@@ -327,9 +327,9 @@ class Image(object):
 
     def reflectance(
         self,
-        irradiance: Optional[Union[float, None]] = None,
-        force_recompute: Optional[bool] = False,
-        return_rrs: Optional[bool] = False,
+        irradiance: Optional[float] = None,
+        force_recompute: bool = False,
+        return_rrs: bool = False,
     ) -> np.ndarray:
         """
         Lazy-compute and return a reflectance image
@@ -337,7 +337,7 @@ class Image(object):
 
         Parameters
         ----------
-        irradiance : float or None
+        irradiance : float [Optional]
             The irradiance used to normalise the radiance image.
             If None then the horizontal irradiance from the DLS2
             will be used.
@@ -375,7 +375,7 @@ class Image(object):
 
         return self.__reflectance_image
 
-    def intensity(self, force_recompute: Optional[bool] = False) -> np.ndarray:
+    def intensity(self, force_recompute: bool = False) -> np.ndarray:
         """Lazy=computes and returns the intensity image after black level,
         vignette, and row correction applied.
         Intensity is in units of DN*Seconds without a radiance correction"""
@@ -397,7 +397,7 @@ class Image(object):
         r_cal = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
         lt_im = vig * r_cal * (image_raw - self.black_level)
         lt_im[lt_im < 0] = 0
-        max_raw_dn = float(2 ** self.bits_per_pixel)
+        max_raw_dn = float(2**self.bits_per_pixel)
         intensity_image = lt_im.astype(float) / (
             self.gain * self.exposure_time * max_raw_dn
         )
@@ -405,7 +405,7 @@ class Image(object):
         self.__intensity_image = intensity_image.T
         return self.__intensity_image
 
-    def radiance(self, force_recompute: Optional[bool] = False) -> np.ndarray:
+    def radiance(self, force_recompute: bool = False) -> np.ndarray:
         """Lazy=computes and returns the radiance image after all radiometric
         corrections have been applied"""
         if self.__radiance_image is not None and force_recompute is False:
@@ -426,7 +426,7 @@ class Image(object):
             r_cal = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
             lt_im = vig * r_cal * (image_raw - self.black_level)
             lt_im[lt_im < 0] = 0
-            max_raw_dn = float(2 ** self.bits_per_pixel)
+            max_raw_dn = float(2**self.bits_per_pixel)
             radiance_image = (
                 lt_im.astype(float) / (self.gain * self.exposure_time) * a1 / max_raw_dn
             )
@@ -471,14 +471,14 @@ class Image(object):
         vignette = 1.0 / np.polyval(v_polynomial, r)
         return vignette, x, y
 
-    def undistorted_radiance(self, force_recompute: Optional[bool] = False) -> np.ndarray:
+    def undistorted_radiance(self, force_recompute: bool = False) -> np.ndarray:
         return self.undistorted(self.radiance(force_recompute))
 
     def undistorted_reflectance(
         self,
-        irradiance: Optional[Union[float, None]] = None,
-        force_recompute: Optional[bool] = False,
-        return_rrs: Optional[bool] = False,
+        irradiance: Optional[float] = None,
+        force_recompute: bool = False,
+        return_rrs: bool = False,
     ) -> np.ndarray:
         return self.undistorted(
             self.reflectance(
@@ -608,8 +608,8 @@ class Image(object):
     def get_homography(
         self,
         ref,
-        r_mat: Optional[Union[np.matrix, None]] = None,
-        t_mat: Optional[Union[np.matrix, None]] = None,
+        r_mat: Optional[np.matrix] = None,
+        t_mat: Optional[np.matrix] = None,
     ) -> np.ndarray:
         # if we have externally supplied rotations/translations for the rig use these
         # otherwise use the rig-relatives intrinsic to the image

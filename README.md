@@ -100,7 +100,7 @@ import micasense.capture as capture
 uav_yaml_file = Path("/path/to/metadata/IMG_0251.yaml")
 img_capture = capture.Capture.from_yaml(uav_yaml_file)
 ```
-    see the notebook [Micasense_acquisition_yamls](Micasense_acquisition_yamls.ipynb) 
+   see the notebook [Micasense_acquisition_yamls](Micasense_acquisition_yamls.ipynb) 
 2. Switching dependencies:
    - from GDAL to rasterio
    - pyexiftool to py3exiv2

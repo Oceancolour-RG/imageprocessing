@@ -90,8 +90,11 @@ This forked repository has the following improvements:
 1. The creation of image acquisition metadata stored as a yaml file with the filename of `IMG_XXXX.yaml`.
    The advantage here is that all the necessary image metadata acquired over various bands (i.e. B01 to
    B10 for the DualCamera) are stored in one file. This yaml file also points to the tif files, which
-   themselves are contained in different directories. The `micasense.image.Image` and `micasense.capture.Capture`
-   classes can accept these yaml files.
+   themselves are contained in different directories.
+
+   see the notebook [Micasense_acquisition_yamls](Micasense_acquisition_yamls.ipynb) 
+
+   The `micasense.image.Image` and `micasense.capture.Capture` classes can accept these yaml files.
    e.g.
 ```python
 import pathlib
@@ -100,7 +103,7 @@ import micasense.capture as capture
 uav_yaml_file = Path("/path/to/metadata/IMG_0251.yaml")
 img_capture = capture.Capture.from_yaml(uav_yaml_file)
 ```
-   see the notebook [Micasense_acquisition_yamls](Micasense_acquisition_yamls.ipynb) 
+
 2. Switching dependencies:
    - from GDAL to rasterio
    - pyexiftool to py3exiv2

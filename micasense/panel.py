@@ -32,9 +32,13 @@ import pyzbar.pyzbar as pyzbar
 from skimage import measure
 import matplotlib.pyplot as plt
 
+import micasense.image as image
+
 
 class Panel(object):
-    def __init__(self, img, panel_corners=None, ignore_autocalibration=False):
+    def __init__(
+        self, img: image.Image, panel_corners=None, ignore_autocalibration=False
+    ):
         # if we have panel images with QR metadata, panel detection is not called,
         # so this can be forced here
         if img is None:

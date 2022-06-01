@@ -30,7 +30,7 @@ import rasterio
 import numpy as np
 import multiprocessing
 
-from pathlib2 import Path
+from pathlib import Path
 from skimage.morphology import disk
 from skimage.util import img_as_ubyte
 from skimage.filters import rank, gaussian
@@ -149,8 +149,8 @@ def align(pair: dict) -> dict:
     if pair["debug"]:
         print("number of pyramid levels: {}".format(nol))
 
-    warp_matrix[0][2] /= 2 ** nol
-    warp_matrix[1][2] /= 2 ** nol
+    warp_matrix[0][2] /= 2**nol
+    warp_matrix[1][2] /= 2**nol
 
     if ref_index != match_index:
 
@@ -253,13 +253,13 @@ def default_warp_matrix(warp_mode):
 
 def refine_alignment_warp(
     ms_capture: capture.Capture,
-    ref_index: Optional[int] = 4,
-    warp_mode: Optional[int] = cv2.MOTION_HOMOGRAPHY,
-    max_iterations: Optional[int] = 2500,
-    epsilon_threshold: Optional[float] = 1e-9,
-    multithreaded: Optional[bool] = True,
-    debug: Optional[bool] = False,
-    pyramid_levels: Optional[Union[int, None]] = None,
+    ref_index: int = 4,
+    warp_mode: int = cv2.MOTION_HOMOGRAPHY,
+    max_iterations: int = 2500,
+    epsilon_threshold: float = 1e-9,
+    multithreaded: bool = True,
+    debug: bool = False,
+    pyramid_levels: Optional[int] = None,
 ) -> Tuple[List[np.ndarray], List[dict]]:
     """
     Extract the alignment warp matrices and alignment pairs in capture using openCV
@@ -377,15 +377,51 @@ def refine_alignment_warp(
     return warp_matrices, alignment_pairs
 
 
+def load_warp_matrices(warp_file: Path) -> List[np.ndarray]:
+    """load the warp matrices and return a list of np.ndarray's"""
+    tmp_wm = np.load(warp_file)
+    # convert to a list of np.ndarray's
+    warp_matrices = [tmp_wm[i, :, :] for i in range(tmp_wm.shape[0])]
+    del tmp_wm
+
+    return warp_matrices
+
+
+def warp_matrices_wrapper(
+    warp_npy_file: Path,
+    uav_yaml_file: Path,
+    match_index: int,
+    max_align_iter: int,
+    warp_mode: int,
+    pyramid_levels: int,
+) -> List[np.ndarray]:
+    """wrapper to create/save or load the warp matrices"""
+    if not warp_npy_file.exists():
+        wrp_capture = capture.Capture.from_yaml(uav_yaml_file)
+        warp_matrices, _ = refine_alignment_warp(
+            ms_capture=wrp_capture,
+            ref_index=match_index,
+            max_iterations=max_align_iter,
+            warp_mode=warp_mode,
+            pyramid_levels=pyramid_levels,
+        )
+        np.save(warp_npy_file, np.array(warp_matrices, order="C", dtype=np.float64))
+
+    else:
+        warp_matrices = load_warp_matrices(warp_npy_file)
+
+    return warp_matrices
+
+
 # apply homography to create an aligned stack
 def aligned_capture_backend(
     ms_capture: capture.Capture,
     warp_matrices: List[np.ndarray],
-    warp_mode: Optional[int] = cv2.MOTION_HOMOGRAPHY,
-    valid_ix: Optional[Union[List[int], None]] = None,
-    img_type: Optional[str] = "reflectance",
-    interpolation_mode: Optional[int] = cv2.INTER_LANCZOS4,
-    crop_edges: Optional[bool] = True,
+    warp_mode: int = cv2.MOTION_HOMOGRAPHY,
+    valid_ix: Optional[List[int]] = None,
+    img_type: str = "reflectance",
+    interpolation_mode: int = cv2.INTER_LANCZOS4,
+    crop_edges: bool = True,
 ) -> np.ndarray:
     width, height = ms_capture.images[0].size()
 
@@ -429,11 +465,11 @@ def aligned_capture_backend(
 
 def aligned_capture(
     ms_capture: capture.Capture,
-    warp_matrices: Optional[Union[List[float], List[np.ndarray], None]] = None,
-    img_type: Optional[Union[None, str]] = None,
-    warp_mode: Optional[int] = cv2.MOTION_HOMOGRAPHY,
-    irradiance_list: Optional[Union[List[float], None]] = None,
-    crop_edges: Optional[bool] = True,
+    warp_matrices: Optional[Union[List[float], List[np.ndarray]]] = None,
+    img_type: Optional[str] = None,
+    warp_mode: int = cv2.MOTION_HOMOGRAPHY,
+    irradiance_list: Optional[List[float]] = None,
+    crop_edges: bool = True,
 ) -> np.ndarray:
     """
     Creates aligned Capture. Computes undistorted radiance
@@ -515,7 +551,7 @@ class Bounds(object):
 def find_crop_bounds(
     ms_capture: capture.Capture,
     registration_transforms: Union[List[float], List[np.ndarray]],
-    warp_mode: Optional[int] = cv2.MOTION_HOMOGRAPHY,
+    warp_mode: int = cv2.MOTION_HOMOGRAPHY,
 ) -> Tuple[List[int], List[float]]:
     """
     Compute the crop rectangle to be applied to a set of images after
@@ -719,10 +755,10 @@ def save_capture_as_stack(
     ms_capture: capture.Capture,
     im_aligned: np.ndarray,
     out_filename: Union[str, Path],
-    img_type: Optional[str] = "reflectance",
-    sort_by_wavelength: Optional[bool] = True,
-    photometric: Optional[str] = "MINISBLACK",
-    compression: Optional[str] = "lzw",
+    img_type: str = "reflectance",
+    sort_by_wavelength: bool = True,
+    photometric: str = "MINISBLACK",
+    compression: str = "lzw",
 ) -> None:
     warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
     """
@@ -851,13 +887,13 @@ def save_capture_as_stack(
 def save_capture_as_rgb(
     im_aligned: np.ndarray,
     out_filename: Union[str, Path],
-    gamma: Optional[float] = 1.4,
-    downsample: Optional[int] = 1,
-    white_balance: Optional[str] = "norm",
-    hist_min_percent: Optional[float] = 0.5,
-    hist_max_percent: Optional[float] = 99.5,
-    sharpen: Optional[bool] = True,
-    rgb_band_indices: Optional[Tuple[int]] = (2, 1, 0),
+    gamma: float = 1.4,
+    downsample: int = 1,
+    white_balance: str = "norm",
+    hist_min_percent: float = 0.5,
+    hist_max_percent: float = 99.5,
+    sharpen: bool = True,
+    rgb_band_indices: Tuple[int, int, int] = (2, 1, 0),
 ):
     """
     Output the Images in the Capture object as RGB.
@@ -922,10 +958,10 @@ def save_thermal_over_rgb(
     ms_capture: capture.Capture,
     im_aligned: np.ndarray,
     out_filename: Union[str, Path],
-    fig_size: Optional[Tuple[int]] = (30, 23),
+    fig_size: Tuple[int, int] = (30, 23),
     lw_index: Optional[int] = None,
-    hist_min_percent: Optional[float] = 0.2,
-    hist_max_percent: Optional[float] = 99.8,
+    hist_min_percent: float = 0.2,
+    hist_max_percent: float = 99.8,
 ):
     """
     Output the Images in the Capture object as thermal over RGB.

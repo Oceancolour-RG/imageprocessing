@@ -85,6 +85,27 @@ To generate the HTML pages after updating the jupyter notebooks, run the followi
 jupyter nbconvert --to html --ExecutePreprocessor.timeout=None --output-dir docs --execute *.ipynb
 ```
 
+## Updates and addendum by Rodrigo A. Garcia
+This forked repository has the following improvements:
+1. The creation of image acquisition metadata stored as a yaml file with the filename of `IMG_XXXX.yaml`.
+   The advantage here is that all the necessary image metadata acquired over various bands (i.e. B01 to
+   B10 for the DualCamera) are stored in one file. This yaml file also points to the tif files, which
+   themselves are contained in different directories. The `micasense.image.Image` and `micasense.capture.Capture`
+   classes can accept these yaml files.
+   e.g.
+```python
+import pathlib
+import micasense.capture as capture
+
+uav_yaml_file = Path("/path/to/metadata/IMG_0251.yaml")
+img_capture = capture.Capture.from_yaml(uav_yaml_file)
+```   
+2. Switching dependencies:
+   - from GDAL to rasterio
+   - pyexiftool to py3exiv2
+3. Improved documentation and typing hints
+4. Addition of a folder restructure script that minimises the number of subfolders
+
 ## License
 
 The MIT License (MIT)

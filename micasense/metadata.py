@@ -30,7 +30,7 @@ import pytz
 import math
 import exiftool  # replace exiftool with pyexiv2
 
-from pathlib2 import Path
+from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Union, Tuple, List
 
@@ -54,7 +54,7 @@ class MetadataFromExif(object):
         return self.exif
 
     def get_item(
-        self, item: str, index: Optional[Union[None, int]] = None
+        self, item: str, index: Optional[int] = None
     ) -> Union[float, int, str, None]:
         """Get metadata item by Namespace:Parameter"""
         val = None

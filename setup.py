@@ -22,7 +22,6 @@ with open("micasense/__init__.py") as f:
 # * pysolar does not support >=3.9,
 # * numpy does not support <=3.6
 # * pyzbar does not support >=3.8, hence pyzbar-x used instead
-# * pathlib does not support >= 3.5, hence pathlib2 used instead
 # * rawpy does not support >=3.8 , hence removed and replaced with opencv
 # The versions in install_requires=[...] were taken from
 # https://pypi.org/search/ with filtering for python 3.7 and 3.8
@@ -48,7 +47,6 @@ setup(
         "Operating System :: OS Independent",
     ],
     install_requires=[
-        "six>=1.16.0",  # requirement of pathlib2
         "imageio>=2.13.3",
         "requests>=2.26.0",
         "numpy>=1.21.3",
@@ -62,7 +60,6 @@ setup(
         "pytz>=2021.3",
         "pyzbar-x>=0.2.1",
         "tqdm>=4.62.3",
-        "pathlib2>=2.3.6",
         "pyyaml>=6.0",
         "rasterio>=1.2.10",
     ],

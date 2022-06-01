@@ -28,7 +28,7 @@ import warnings
 import numpy as np
 
 from datetime import datetime
-from typing import Tuple
+from typing import Tuple, List
 
 # for DLS correction, we need the sun position at the time the image was taken
 # this can be computed using the pysolar package (ver 0.6)
@@ -56,12 +56,17 @@ finally:
         print("Unable to import pysolar")
 
 
-def fresnel(phi):
+def fresnel(phi: float):
     return __multilayer_transmission(phi, n=[1.000277, 1.6, 1.38])
 
 
 # define functions to compute the DLS-Sun angle:
-def __fresnel_transmission(phi, n1=1.000277, n2=1.38, polarization=[0.5, 0.5]):
+def __fresnel_transmission(
+    phi: float,
+    n1: float = 1.000277,
+    n2: float = 1.38,
+    polarization: List[float, float] = [0.5, 0.5],
+) -> float:
     """compute fresnel transmission between media with refractive indices n1 and n2"""
     # computes the reflection and transmittance
     # for incidence angles  phi for transition from medium
@@ -87,7 +92,9 @@ def __fresnel_transmission(phi, n1=1.000277, n2=1.38, polarization=[0.5, 0.5]):
     return f_t
 
 
-def __multilayer_transmission(phi, n, polarization=[0.5, 0.5]):
+def __multilayer_transmission(
+    phi: float, n: List[float], polarization: List[float, float] = [0.5, 0.5]
+):
     ml_t = 1.0
     phi_eff = np.copy(phi)
     for i in range(0, len(n) - 1):
@@ -99,7 +106,7 @@ def __multilayer_transmission(phi, n, polarization=[0.5, 0.5]):
 
 
 # get the position of the sun in North-East-Down (NED) coordinate system
-def ned_from_pysolar(sun_azimuth, sun_altitude):
+def ned_from_pysolar(sun_azimuth: float, sun_altitude: float) -> np.ndarray:
     """Convert pysolar coordinates to NED coordinates."""
     elements = (
         np.cos(sun_azimuth) * np.cos(sun_altitude),
@@ -112,7 +119,7 @@ def ned_from_pysolar(sun_azimuth, sun_altitude):
 # get the sensor orientation in North-East-Down coordinates
 # pose is a yaw/pitch/roll tuple of angles measured for the DLS
 # ori is the 3D orientation vector of the DLS in body coordinates (typically [0,0,-1])
-def get_orientation(pose, ori):
+def get_orientation(pose: List[float], ori: np.ndarray):
     """Generate an orientation vector from yaw/pitch/roll angles in radians."""
     yaw, pitch, roll = pose
     c1 = np.cos(-yaw)

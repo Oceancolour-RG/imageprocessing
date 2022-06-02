@@ -65,7 +65,7 @@ def __fresnel_transmission(
     phi: float,
     n1: float = 1.000277,
     n2: float = 1.38,
-    polarization: List[float, float] = [0.5, 0.5],
+    polarization: List[float] = [0.5, 0.5],
 ) -> float:
     """compute fresnel transmission between media with refractive indices n1 and n2"""
     # computes the reflection and transmittance
@@ -93,7 +93,7 @@ def __fresnel_transmission(
 
 
 def __multilayer_transmission(
-    phi: float, n: List[float], polarization: List[float, float] = [0.5, 0.5]
+    phi: float, n: List[float], polarization: List[float] = [0.5, 0.5]
 ):
     ml_t = 1.0
     phi_eff = np.copy(phi)

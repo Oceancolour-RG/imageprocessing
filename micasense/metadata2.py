@@ -135,25 +135,32 @@ class MetadataFromExif(object):
         alt = float(self.exif["Exif.GPSInfo.GPSAltitude"].value)
         return lat, lon, alt
 
-    def utc_time(self) -> datetime:
+    def utc_time(self) -> Union[datetime, None]:
         """Get the timezone-aware datetime of the image capture"""
-        utctime = datetime.strptime(
-            self.exif["Exif.Image.DateTime"].raw_value, "%Y:%m:%d %H:%M:%S"
-        )
-        # utctime can also be obtained with DateTimeOriginal:
-        # utctime = datetime.strptime(
-        #     self.exif["Exif.Photo.DateTimeOriginal"].raw_value, "%Y:%m:%d %H:%M:%S"
-        # )
+        try:
+            utctime_rval = self.exif["Exif.Image.DateTime"].raw_value
+        except KeyError:
+            utctime_rval = None
 
-        # extract the millisecond from the EXIF metadata:
-        subsec = int(self.exif["Exif.Photo.SubSecTime"].raw_value)
+        if utctime_rval is None:
+            utctime = None
+        else:
+            utctime = datetime.strptime(utctime_rval, "%Y:%m:%d %H:%M:%S")
+            # utctime can also be obtained with DateTimeOriginal:
+            # utctime = datetime.strptime(
+            #     self.exif["Exif.Photo.DateTimeOriginal"].raw_value, "%Y:%m:%d %H:%M:%S"
+            # )
 
-        sign = -1.0 if subsec < 0 else 1.0
-        millisec = sign * 1e3 * float("0.{}".format(abs(subsec)))
+            # extract the millisecond from the EXIF metadata:
+            subsec = int(self.exif["Exif.Photo.SubSecTime"].raw_value)
 
-        utctime += timedelta(milliseconds=millisec)
-        timezone = pytz.timezone("UTC")
-        utctime = timezone.localize(utctime)
+            sign = -1.0 if subsec < 0 else 1.0
+            millisec = sign * 1e3 * float("0.{}".format(abs(subsec)))
+
+            utctime += timedelta(milliseconds=millisec)
+            timezone = pytz.timezone("UTC")
+            utctime = timezone.localize(utctime)
+
         return utctime
 
     def dls_pose(self) -> Tuple[float, float, float]:

@@ -32,8 +32,8 @@ setup(
     description=u"Micasense Image Processing",
     long_description=README,
     long_description_content_type="text/markdown",
-    author=u"MicaSense, Inc. & Rodrigo A. Garcia",
-    author_email="rodrigo.garcia@uwa.edu.au",
+    author=u"MicaSense, Inc.",
+    author_email="github@micasense.com",
     url="https://github.com/Oceancolour-RG/imageprocessing",
     license="MIT",
     use_scm_version=True,
@@ -55,7 +55,7 @@ setup(
         "matplotlib>=3.5.0",
         "scikit-image>=0.19.0",
         "packaging>=21.3",
-        "pyexiftool>=0.4.11",  # this will eventually be removed
+        "pyexiftool<=0.4.13",  # this will eventually be removed
         "py3exiv2>=0.9.3",  # replace pyexiftool
         "pytz>=2021.3",
         "pyzbar-x>=0.2.1",

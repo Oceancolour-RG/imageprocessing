@@ -607,10 +607,11 @@ def find_crop_bounds(
     ]
     combined_bounds = get_combined_bounds(bounds, image_sizes[0])
 
-    start_cix = int(np.ceil(combined_bounds.min.x))
-    start_rix = int(np.ceil(combined_bounds.min.y))
-    end_cix = int(np.floor(combined_bounds.max.x))
-    end_rix = int(np.floor(combined_bounds.max.y))
+    buff = 2  # increase cropping by `buff` to be on the safe side
+    start_cix = int(np.ceil(combined_bounds.min.x)) + buff
+    start_rix = int(np.ceil(combined_bounds.min.y)) + buff
+    end_cix = int(np.floor(combined_bounds.max.x)) - buff
+    end_rix = int(np.floor(combined_bounds.max.y)) - buff
 
     # width = np.floor(combined_bounds.max.x - combined_bounds.min.x)
     # height = np.floor(combined_bounds.max.y - combined_bounds.min.y)

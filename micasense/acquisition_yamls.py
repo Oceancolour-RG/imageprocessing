@@ -645,20 +645,26 @@ def create_img_acqi_yamls(
     dpath : Path
         Parent directory containing a set of folders named "red_cam"
         and "blue_cam". Within each of these folders there should be
-        a set of sub-directories named "SYNCXXXXSET".
+        a set of sub-directories named "SYNCXXXXSET". Filenames
+        will be relative to `dpath`
     opath : Path [Optional]
         The output path where the yamls are stored. If not provided,
         then a folder named "metadata" will be created within the
-        specified `dpath` folder
+        specified `dpath` folder.
+
     Notes
     -----
     ** Each yaml file contains the following metadata:
        yaml_dict = {
+           "base_path": "/path/to/somewhere/micasense"
            "band_1": {
-               "file": str,  # e.g. /some/path/to/IMG_0000_1.tif
+               "file": str,  # e.g. /metadata/IMG_0000_1.tif
                "band"
            }
        }
+    ** The absolute path of "file" can be recovered by:
+       fn = Path(base_path) / file
+
     ** This code assumes that the IMG_XXXX_*.tif files have been
        moved from their native 000/, 001/, ... folders directly
        into the SYNCXXXXSET folder, e.g.
@@ -733,7 +739,10 @@ def create_img_acqi_yamls(
         for acq in acqi_ids:
 
             # initiate the output dict
-            md_dict = {"image_data": dict()}
+            md_dict = {
+                "image_data": dict(),
+                "base_path": str(dpath),
+            }
 
             # get a sorted list of tif files for this acquisition
             unsorted_tifs = []
@@ -759,7 +768,7 @@ def create_img_acqi_yamls(
                     valid = False
                 else:
                     # valid = True
-                    md_dict["image_data"][bname]["filename"] = str(f)
+                    md_dict["image_data"][bname]["filename"] = str(f.relative_to(dpath))
 
                 if misc_dict and not done:
                     for key in misc_dict:

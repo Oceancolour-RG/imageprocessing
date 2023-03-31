@@ -284,7 +284,7 @@ class Image(object):
         """Lazy load the raw image"""
         if self.__raw_image is None:
             try:
-                self.__raw_image = cv2.imread(self.path, cv2.IMREAD_UNCHANGED)
+                self.__raw_image = cv2.imread(str(self.path), cv2.IMREAD_UNCHANGED)
             except IOError:
                 raise Exception(f"Could not open image at path {self.path}")
         return self.__raw_image

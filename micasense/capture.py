@@ -179,7 +179,7 @@ class Capture(object):
         return cls(images)
 
     @classmethod
-    def from_yaml(cls, yaml_file: Union[Path, str]):
+    def from_yaml(cls, yaml_file: Union[Path, str], base_path: Optional[Path, str]=None):
         """
         Create Capture object from a yaml file containing the
         relevant metadata for each band.
@@ -188,15 +188,30 @@ class Capture(object):
         ----------
         yaml_file : Path or str
             The yaml file
+        base_path : Optional[Path or str]
+            The Base path of the relative filenames given in the yaml file.
+            If None, then the base_path provided in the yaml file will be used.
+
         Returns
         -------
         Capture object.
         """
         d = ms_yaml.load_all(yaml_file=yaml_file)
+        if base_path is None:
+            base_path = Path(d["base_path"])
+        else:  # Path or str
+            if isinstance(base_path, (str, Path)):
+                base_path = Path(base_path)
+            else:
+                raise ValueError("`base_path` must be None, str or Path")
+
+        if not base_path.exists():
+            raise FileNotFoundError(f"'{base_path}' does not exist")
+
 
         images = [
             image.Image(
-                image_path=d["image_data"][key]["filename"],
+                image_path=base_path / d["image_data"][key]["filename"],
                 metadata_dict=d,
             )
             for key in d["image_data"]

@@ -179,7 +179,9 @@ class Capture(object):
         return cls(images)
 
     @classmethod
-    def from_yaml(cls, yaml_file: Union[Path, str], base_path: Optional[Path, str]=None):
+    def from_yaml(
+        cls, yaml_file: Union[Path, str], base_path: Optional[Union[Path, str]] = None
+    ):
         """
         Create Capture object from a yaml file containing the
         relevant metadata for each band.
@@ -207,7 +209,6 @@ class Capture(object):
 
         if not base_path.exists():
             raise FileNotFoundError(f"'{base_path}' does not exist")
-
 
         images = [
             image.Image(

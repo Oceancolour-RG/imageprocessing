@@ -192,7 +192,15 @@ def align(pair: dict) -> dict:
             max_iterations,
             epsilon_threshold,
         )
-        # run pyramid ECC
+
+        # run pyramid ECC.  Here, we estimate the warp_matrix from low-res
+        # imagery to it's native resolution. Note the warp matrix from the
+        # lower res are passed to the higher res.  This approach is useful
+        # when misaligments are large. It should be noted that "the motion
+        # model is not adequate when there is local motion in the images (
+        # e.g. the subject has moved a bit in the two images). An additional
+        # local alignment needs to be done using say an optical flow based
+        # approach" https://learnopencv.com/image-alignment-ecc-in-opencv-c-python/
         for level in range(nol + 1):
             grad1 = gradient(gray1_pyr[level])
             grad2 = gradient(gray2_pyr[level])
@@ -760,6 +768,7 @@ def save_capture_as_stack(
     sort_by_wavelength: bool = True,
     photometric: str = "MINISBLACK",
     compression: str = "lzw",
+    odtype: str = "uint16",
 ) -> None:
     warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
     """
@@ -788,12 +797,23 @@ def save_capture_as_stack(
          see https://gdal.org/drivers/raster/gtiff.html for information
          on the different compression algorithms. Note though, PACKBITS
          DEFLATE and LZW are lossless approaches. Default is lzw
+    odtype : str
+        output dtype, options include "uint16", "float32"
     """
+    odtype = odtype.lower()
+    avail_odt = ["uint16", "float32"]
+    if odtype not in avail_odt:
+        raise ValueError(f"specified odtype ('{odtype}') not in {avail_odt}")
+
+    vis_sfactor, thermal_sfactor, thermal_offset = 1.0, 1.0, 0.0
+    np_odt = np.dtype(odtype)
+    if odtype == "uint16":
+        vis_sfactor = np.iinfo(np.dtype(odtype)).max
+        thermal_sfactor = 100.0
+        thermal_offset = 273.15
+
     nrows, ncols, nbands = im_aligned.shape
-    nodata = 0
-    odtype = np.dtype(np.uint16)
-    vis_sfactor = None
-    thermal_sfactor, thermal_offset = None, None
+    nodata = np_odt.type(0)
 
     wavel = ms_capture.center_wavelengths()
     if sort_by_wavelength:
@@ -804,7 +824,7 @@ def save_capture_as_stack(
     # To conserve memory, the geotiff will be saved as uint16
     meta = {
         "driver": "GTiff",
-        "dtype": "uint16",
+        "dtype": odtype,
         "nodata": nodata,
         "width": ncols,
         "height": nrows,
@@ -827,7 +847,6 @@ def save_capture_as_stack(
         # iterate through the visible bands
         vis_wavel = ""
         for out_bix, in_bix in enumerate(eo_list):
-            vis_sfactor = np.iinfo(odtype).max
             bandim = im_aligned[:, :, in_bix]
 
             # identify flagged pixels (<=0.0) if img_type == "reflectance"
@@ -837,7 +856,7 @@ def save_capture_as_stack(
             else:
                 flagged_ix = bandim <= 0
 
-            bandim[flagged_ix] = 0.0
+            bandim[flagged_ix] = nodata
 
             # convert bandim from float32 to uint16.
             dst.write(
@@ -851,11 +870,10 @@ def save_capture_as_stack(
 
         # iterate through the thermal bands
         for out_bix, in_bix in enumerate(ms_capture.lw_indices()):
-            thermal_sfactor = 100.0
-            thermal_offset = 273.15
             bandim = (im_aligned[:, :, in_bix] + thermal_offset) * thermal_sfactor
-            bandim[bandim < 0] = 0
-            bandim[bandim > np.iinfo(odtype).max] = np.iinfo(odtype).max
+            bandim[bandim < 0] = nodata
+            if odtype == "uint16":
+                bandim[bandim > vis_sfactor] = vis_sfactor
 
             dst.write(bandim.asdtype(odtype), indexes=len(eo_list) + out_bix + 1)
             # dst.set_band_description(len(eo_list) + out_bix + 1, f"LWIR {out_bix+1}")

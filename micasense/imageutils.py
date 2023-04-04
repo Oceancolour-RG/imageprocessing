@@ -807,13 +807,14 @@ def save_capture_as_stack(
 
     vis_sfactor, thermal_sfactor, thermal_offset = 1.0, 1.0, 0.0
     np_odt = np.dtype(odtype)
+    nodata = np_odt.type(-9999.0)
     if odtype == "uint16":
         vis_sfactor = np.iinfo(np.dtype(odtype)).max
         thermal_sfactor = 100.0
         thermal_offset = 273.15
+        nodata = np_odt.type(0)
 
     nrows, ncols, nbands = im_aligned.shape
-    nodata = np_odt.type(0)
 
     wavel = ms_capture.center_wavelengths()
     if sort_by_wavelength:

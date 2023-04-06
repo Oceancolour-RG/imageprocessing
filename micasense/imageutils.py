@@ -28,6 +28,7 @@ import imageio
 import warnings
 import rasterio
 import numpy as np
+import numexpr as ne
 import multiprocessing
 
 from pathlib import Path
@@ -39,6 +40,10 @@ from typing import Union, List, Tuple, Optional
 
 import micasense.capture as capture
 import micasense.plotutils as plotutils
+
+
+def min_ix(arr: np.ndarray, v: float) -> int:
+    return int(abs(arr - v).argmin())
 
 
 def normalize(im, min=None, max=None):
@@ -80,6 +85,112 @@ def gradient(im, ksize=5):
     grad_y = cv2.Sobel(im, cv2.CV_32F, 0, 1, ksize=ksize)
     grad = cv2.addWeighted(np.absolute(grad_x), 0.5, np.absolute(grad_y), 0.5, 0)
     return grad
+
+
+def compute_nonlinear_index(b1: np.ndarray, b2: np.ndarray) -> np.ndarray:
+    """
+    Compute a non-linear index having the formulation of:
+    index = (b1 - b2) / (b1 + b2)
+
+    Parameters
+    ----------
+    b1 : np.ndarray {dims=(nrows, ncols)}
+        band 1
+    b2 : np.ndarray {dims=(nrows, ncols)}
+        band 2
+
+    Returns
+    -------
+    index : np.ndarray {dims=(nrows, ncols)}
+        index
+    """
+    return ne.evaluate("(b1 - b2) / (b1 + b2)")
+
+
+def get_ndwi(
+    ms_capture: capture.Capture,
+    im_aligned: np.ndarray,
+    green_wvl: Union[float, int] = 560,
+    nir_wvl: Union[float, int] = 842,
+    nodata: float = -9999.0,
+) -> np.ndarray:
+    """
+    Compute the NDWI (normalised difference water index)
+    NDWI = (green - nir) / (green + nir)
+
+    see: https://eos.com/make-an-analysis/ndwi/
+
+    Parameters
+    ----------
+    ms_capture : capture.Capture
+        Capture object (a set of micasense.image.Images) taken by a single or
+        a pair (e.g. dual camera) of Micasense camera(s), which share the same
+        unique identifier (capture id).
+    im_aligned : np.ndarray, (dtype=np.float32)
+        The stack of aligned (or unaligned) images.
+    green_wvl : float, int
+        wavelength of green band (default=560 nm)
+    nir_wvl : np.ndarray, dims=(nrows, ncols)
+        wavelength of NIR band (default=842 nm)
+    nodata : float
+        Nodata value in the NDWI product (default=-9999.0)
+
+    Returns
+    -------
+    ndwi : np.ndarray {dims=(nrows, ncols), dtype=float64}
+        Normalised difference water index
+
+    """
+    wavels = np.array(ms_capture.center_wavelengths())
+    nir_ix = min_ix(wavels, nir_wvl)
+    grn_ix = min_ix(wavels, green_wvl)
+
+    ndwi = compute_nonlinear_index(b1=im_aligned[grn_ix], b2=im_aligned[nir_ix])
+    ndwi[(im_aligned[nir_ix] == 0) & (im_aligned[grn_ix] == 0)] = nodata
+    return np.array(ndwi, order="C", dtype="float64")
+
+
+def get_ndvi(
+    ms_capture: capture.Capture,
+    im_aligned: np.ndarray,
+    red_wvl: Union[float, int] = 668,
+    nir_wvl: Union[float, int] = 842,
+    nodata: float = -9999.0,
+) -> np.ndarray:
+    """
+    Compute the NDVI (normalised difference vegetation index)
+
+    https://eos.com/make-an-analysis/ndvi/
+
+    Parameters
+    ----------
+    ms_capture : capture.Capture
+        Capture object (a set of micasense.image.Images) taken by a single or
+        a pair (e.g. dual camera) of Micasense camera(s), which share the same
+        unique identifier (capture id).
+    im_aligned : np.ndarray, (dtype=np.float32)
+        The stack of aligned (or unaligned) images.
+    red_wvl : float, int
+        wavelength of green band (default=668 nm)
+    nir_wvl : np.ndarray, dims=(nrows, ncols)
+        wavelength of NIR band (default=842 nm)
+    nodata : float
+        Nodata value in the NDWI product (default=-9999.0)
+
+
+    Returns
+    -------
+    ndvi : np.ndarray {dims=(nrows, ncols), dtype=float64}
+        Normalised difference vegetation index
+
+    """
+    wavels = np.array(ms_capture.center_wavelengths())
+    nir_ix = min_ix(wavels, nir_wvl)
+    red_ix = min_ix(wavels, red_wvl)
+
+    ndvi = compute_nonlinear_index(b1=im_aligned[nir_ix], b2=im_aligned[red_ix])
+    ndvi[(im_aligned[nir_ix] == 0) & (im_aligned[red_ix] == 0)] = nodata
+    return np.array(ndvi, order="C", dtype="float64")
 
 
 def relatives_ref_band(ms_capture: capture.Capture) -> int:

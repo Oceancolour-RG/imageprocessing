@@ -554,14 +554,14 @@ def aligned_capture_backend(
 
         if warp_mode != cv2.MOTION_HOMOGRAPHY:
             im_aligned[:, :, i] = cv2.warpAffine(
-                img,
+                img,  # ms_capture.images[i]
                 warp_matrices[i],
                 (width, height),
                 flags=interpolation_mode + cv2.WARP_INVERSE_MAP,
             )
         else:
             im_aligned[:, :, i] = cv2.warpPerspective(
-                img,
+                img,  # ms_capture.images[i]
                 warp_matrices[i],
                 (width, height),
                 flags=interpolation_mode + cv2.WARP_INVERSE_MAP,
@@ -892,7 +892,7 @@ def save_capture_as_stack(
         Capture object (a set of micasense.image.Images) taken by a single or
         a pair (e.g. dual camera) of Micasense camera(s), which share the same
         unique identifier (capture id).
-    im_aligned : np.ndarray, (dtype=np.float32)
+    im_aligned : np.ndarray, {dtype=np.float32, dims=(nrows, ncols, nbands)}
         The stack of aligned (or unaligned) images.
     out_filename : str or Path
         The output geotif filename
@@ -902,19 +902,27 @@ def save_capture_as_stack(
     photometric : str [Optional]
         GDAL argument (see https://gdal.org/drivers/raster/gtiff.html)
     compression : str [Optional]
-        "jpeg", "lzw", "packbits", "deflate", "ccittrle", "ccittfax3",
-         "ccittfax4", "lzma", "zstd", "lerc", "lerc_deflate", "lerc_zstd",
-         "webp", "jxl", "none"
-         see https://gdal.org/drivers/raster/gtiff.html for information
-         on the different compression algorithms. Note though, PACKBITS
-         DEFLATE and LZW are lossless approaches. Default is lzw
+        "jpeg", "lzw", "packbits", "deflate", "webp", "none"
+        compression that are used by GDAL and EXIF
+        * see https://gdal.org/drivers/raster/gtiff.html for information
+          on the different compression algorithms. Note though, PACKBITS
+          DEFLATE and LZW are lossless approaches. Default is lzw
+        * see https://exiftool.org/TagNames/EXIF.html#Compression
     odtype : str
         output dtype, options include "uint16", "float32"
     """
+
+    def raise_err(user_parm: str, pname: str, allowable: List[str]) -> None:
+        if user_parm not in allowable:
+            raise ValueError(f"specified {pname} ('{user_parm}') not in {allowable}")
+
     odtype = odtype.lower()
     avail_odt = ["uint16", "float32"]
-    if odtype not in avail_odt:
-        raise ValueError(f"specified odtype ('{odtype}') not in {avail_odt}")
+    raise_err(odtype, "odtype", avail_odt)
+
+    ocomp = compression.lower()
+    avail_comp = ["jpeg", "lzw", "packbits", "deflate", "webp", "none"]
+    raise_err(ocomp, "compression", avail_comp)
 
     vis_sfactor, thermal_sfactor, thermal_offset = 1.0, 1.0, 0.0
     np_odt = np.dtype(odtype)
@@ -941,20 +949,14 @@ def save_capture_as_stack(
         "width": ncols,
         "height": nrows,
         "count": nbands,
+        "compress": ocomp,
+        "tiled": True,
+        "blockxsize": int(ncols) // 5,
+        "blockysize": int(nrows) // 5,
+        "interleave": "band",
     }
-    blockxsize = int(ncols) // 5
-    blockysize = int(nrows) // 5
 
-    with rasterio.open(
-        str(out_filename),
-        "w",
-        **meta,
-        compress=compression,
-        tiled=True,
-        blockxsize=blockxsize,
-        blockysize=blockysize,
-        interleave="band",  # equivalent to band-sequential interleave
-    ) as dst:
+    with rasterio.open(str(out_filename), "w", **meta) as dst:
 
         # iterate through the visible bands
         vis_wavel = ""
@@ -1013,6 +1015,152 @@ def save_capture_as_stack(
 
     if not Path(out_filename).exists():
         raise Exception(f"issue with writing {out_filename}")
+
+
+def save_aligned_individual(
+    ms_capture: capture.Capture,
+    im_aligned: np.ndarray,
+    out_basename: str,
+    img_type: str = "reflectance",
+    sort_by_wavelength: bool = True,
+    photometric: str = "MINISBLACK",
+    compression: str = "lzw",
+    odtype: str = "uint16",
+) -> None:
+    warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+    """
+    Write a geotif (without a defined Affine and CRS projection)
+    for each band in `im_aligned`
+
+    Parameters
+    ----------
+    ms_capture : capture.Capture
+        Capture object (a set of micasense.image.Images) taken by a single or
+        a pair (e.g. dual camera) of Micasense camera(s), which share the same
+        unique identifier (capture id).
+    im_aligned : np.ndarray, {dtype=np.float32, dims=(nrows, ncols, nbands)}
+        The stack of aligned (or unaligned) images.
+    out_basename : str
+        The output geotif basename, e.g. /path/to/output/IMG_ALIGNED_0251
+    sort_by_wavelength : bool [Optional]
+        Specifies whether to save the image stack with ordered
+        wavelength (ascending order), default = True
+    photometric : str [Optional]
+        GDAL argument (see https://gdal.org/drivers/raster/gtiff.html)
+    compression : str [Optional]
+        "jpeg", "lzw", "packbits", "deflate", "webp", "none"
+        compression that are used by GDAL and EXIF
+        * see https://gdal.org/drivers/raster/gtiff.html for information
+          on the different compression algorithms. Note though, PACKBITS
+          DEFLATE and LZW are lossless approaches. Default is lzw
+        * see https://exiftool.org/TagNames/EXIF.html#Compression
+    odtype : str
+        output dtype, options include "uint16", "float32"
+    """
+
+    def raise_err(user_parm: str, pname: str, allowable: List[str]) -> None:
+        if user_parm not in allowable:
+            raise ValueError(f"specified {pname} ('{user_parm}') not in {allowable}")
+
+    odtype = odtype.lower()
+    avail_odt = ["uint16", "float32"]
+    raise_err(odtype, "odtype", avail_odt)
+
+    ocomp = compression.lower()
+    avail_comp = ["jpeg", "lzw", "packbits", "deflate", "webp", "none"]
+    exif_comp = {
+        "jpeg": 7,
+        "lzw": 5,
+        "packbits": 32773,
+        "deflate": 32946,
+        "webp": 34927,
+        "none": 1,
+    }
+    raise_err(ocomp, "compression", avail_comp)
+
+    vis_sfactor = 1.0
+    np_odt = np.dtype(odtype)
+    nodata = np_odt.type(-9999.0)
+    if odtype == "uint16":
+        vis_sfactor = np.iinfo(np.dtype(odtype)).max
+        nodata = np_odt.type(0)
+
+    nrows, ncols, nbands = im_aligned.shape
+
+    # To conserve memory, the geotiff will be saved as uint16
+    meta = {
+        "driver": "GTiff",
+        "dtype": odtype,
+        "nodata": nodata,
+        "width": ncols,
+        "height": nrows,
+        "count": 1,
+        "compress": ocomp,
+    }
+
+    import pyexiv2
+    from fractions import Fraction
+
+    exclude_tags = [
+        "Exif.Image.StripOffsets",
+        "Exif.Image.RowsPerStrip",
+        "Exif.Image.StripByteCounts",
+        "Exif.Image.XMLPacket",
+        "Exif.Photo.ExposureTime",
+        "Exif.Photo.FNumber",
+        "Exif.Photo.ExposureProgram",
+        "Exif.Photo.ISOSpeed",
+        "Exif.Image.0xbb94",
+        "Exif.Image.0xbb95",
+        "Exif.Image.BlackLevelRepeatDim",
+        "Exif.Image.BlackLevel",
+        "Exif.Image.OpcodeList3",
+        "Xmp.Camera.PerspectiveDistortion",
+        "Xmp.Camera.VignettingCenter",
+        "Xmp.Camera.VignettingPolynomial",
+    ]
+    vv = 1000000
+
+    for i in range(nbands):
+        img = ms_capture.images[i]
+        # get output name
+        bnum = img.path.stem.split("_")[-1]
+        ofn = str(out_basename) + f"_{bnum}.tif"
+
+        # write geotif
+        bandim = im_aligned[:, :, i]
+        # identify flagged pixels (<=0.0) if img_type == "reflectance"
+        # then pixels with values > 1.0 will also be masked.
+        if img_type == "reflectance":
+            flagged_ix = (bandim <= 0) | (bandim > 1.0)
+        else:
+            flagged_ix = bandim <= 0
+        bandim[flagged_ix] = nodata
+
+        with rasterio.open(ofn, "w", **meta) as dst:
+            dst.write(np.array(bandim * vis_sfactor, order="C", dtype=odtype), 1)
+
+        # copy exif metadata
+        ini_md = pyexiv2.ImageMetadata(str(img.path))
+        ini_md.read()
+
+        for k in exclude_tags:
+            ini_md.__delitem__(k)
+        ini_md.modified = True
+
+        out_md = pyexiv2.metadata.ImageMetadata(ofn)
+        out_md.read()
+        ini_md.copy(out_md, comment=False)
+
+        nn1 = int(img.newcammat_dfx * vv)
+        nn2 = int(img.newcammat_dfy * vv)
+        out_md["Exif.Photo.FocalPlaneXResolution"].value = Fraction(nn1, vv)
+        out_md["Exif.Photo.FocalPlaneYResolution"].value = Fraction(nn2, vv)
+        out_md[
+            "Xmp.Camera.PrincipalPoint"
+        ].value = f"{img.newcammat_ppx},{img.newcammat_ppy}"
+        out_md["Exif.Image.Compression"].value = exif_comp[ocomp]
+        out_md.write()
 
 
 def save_capture_as_rgb(

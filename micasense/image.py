@@ -106,10 +106,12 @@ class Image(object):
         self.path = image_path
         if metadata_dict is None:
             self.meta = metadata.MetadataFromExif(filename=self.path)
+            # md = self.meta.exif
         else:
             self.meta = metadata.MetadataFromDict(
                 filename=self.path, metadata_dict=metadata_dict
             )
+            # self.meta.exif = None
 
         if self.meta.band_name() is None:
             raise ValueError("Provided file path does not have a band name: {image_path}")
@@ -157,6 +159,14 @@ class Image(object):
         self.panel_albedo = self.meta.panel_albedo()
         self.panel_region = self.meta.panel_region()
         self.panel_serial = self.meta.panel_serial()
+
+        # New camera matrix computed with getOptimalNewCameraMatrix()
+        # during undistortion
+        self.newcammat_dfx = None
+        self.newcammat_dfy = None
+        self.newcammat_ppx = None
+        self.newcammat_ppy = None
+
 
         # Note that dls_orientation_vector is only used
         # for processing the DLS1 data. According to the
@@ -524,7 +534,7 @@ class Image(object):
         t_y = math.radians(self.rig_relatives[1]) / px_fov_y
         return (t_x, t_y)
 
-    def undistorted(self, image: np.ndarray) -> np.ndarray:
+    def undistorted(self, image: np.ndarray, centre_pp: bool=False) -> np.ndarray:
         """return the undistorted image from input image"""
         # If we have already undistorted the same source, just return that here
         # otherwise, lazy compute the undstorted image
@@ -537,8 +547,40 @@ class Image(object):
         self.__undistorted_source = image
 
         new_cam_mat, _ = cv2.getOptimalNewCameraMatrix(
-            self.cv2_camera_matrix(), self.cv2_distortion_coeff(), self.size(), 1
+            self.cv2_camera_matrix(),  # cameraMatrix
+            self.cv2_distortion_coeff(),  # distCoeffs
+            self.size(),  # imageSize
+            1,  # alpha
+            self.size(),  # newImgSize
+            centre_pp,  # centerPrincipalPoint
         )
+
+        # We have an issue. The undistorted image has intrinsic camera
+        # parameters defined in `new_cam_mat`, which have units of 'pixels'.
+        # Unfortunately, the EXIF tags require units of inches, cm, mm or
+        # micrometres. In order to convert between pixels and, say, mm,
+        # we need to know the focal plane x and y resolutions (units: px/mm).
+        # These parameters in `new_cam_mat` are also unknown. Additionally,
+        # `new_cam_mat` generally has different fx and fy. Yet a pinhole
+        # camera model only has a single focal length. This implies that
+        # the focal plane x and y resolutions (dfx and dfx) are different.
+        # fx (pixels) = f (mm) * dfx (pixels / mm)
+        # fy (pixels) = f (mm) * dfy (pixels / mm)
+        # cx (pixels) = X-Principal point (mm) * dfx (pixels / mm)
+        # cy (pixels) = Y-Principal point (mm) * dfy (pixels / mm)
+
+        # From fx, fy, cx and cy in `new_cam_mat`, we cannot solve for
+        # f, dfx, dfy, X-PP, Y-PP as there are five unknowns from four
+        # known values. Thus we have to assume that the focal length
+        # has been conserved.
+
+        dfx = new_cam_mat[0, 0] / self.focal_length
+        dfy = new_cam_mat[1, 1] / self.focal_length
+        self.newcammat_dfx = dfx
+        self.newcammat_dfy = dfy
+        self.newcammat_ppx = new_cam_mat[0, 2] / dfx
+        self.newcammat_ppy = new_cam_mat[1, 2] / dfy
+
         map1, map2 = cv2.initUndistortRectifyMap(
             self.cv2_camera_matrix(),
             self.cv2_distortion_coeff(),

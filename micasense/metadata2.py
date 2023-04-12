@@ -537,6 +537,7 @@ class MetadataFromDict(object):
 
         self.im_name = filename.name
         self.meta = metadata_dict
+        self.exif = None
 
     def print_all(self) -> None:
         for item in self.meta():

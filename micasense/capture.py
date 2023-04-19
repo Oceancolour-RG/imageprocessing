@@ -285,10 +285,26 @@ class Capture(object):
         return self.images[0].utc_time
 
     def solar_geoms(self) -> Tuple[float, float]:
-        """Returns the solar zenith and azimuth at the time of capture"""
+        """
+        Get the solar geometry
+
+        Returns
+        -------
+        sza : float
+            solar zenith angle
+        saa : float
+            solar azimuth anlge, where,
+            0  = north, 90 = east, 180 = south, 270 = west
+        """
         lat, lon, _ = self.location()
         dt = self.utc_time()
-        return 90.0 - get_altitude(lat, lon, dt), get_azimuth(lat, lon, dt)
+
+        sza = 90.0 - get_altitude(lat, lon, dt)
+
+        saa = get_azimuth(lat, lon, dt)  # negative angles are west of North
+        saa = saa % 360
+
+        return sza, saa
 
     def clear_image_data(self):
         """

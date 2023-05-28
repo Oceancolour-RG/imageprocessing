@@ -493,34 +493,39 @@ def band_dict_from_file(
         md_keys.extend(md.xmp_keys)
         # pprint(md_keys)
 
-        panel_albedo = get_panel_albedo(md_keys, md)
-        panel_region = get_panel_region(md_keys, md)
-        panel_serial = get_panel_serial(md_keys, md)
+        kw = {"md_keys": md_keys, "md": md}
+        panel_albedo = get_panel_albedo(**kw)
+        panel_region = get_panel_region(**kw)
+        panel_serial = get_panel_serial(**kw)
         auto_cal_image = get_auto_calibration_image(
             md_keys, md, panel_albedo, panel_region, panel_serial
         )
 
         firmware_version = md["Exif.Image.Software"].value.strip("v")
         camera_model = md["Exif.Image.Model"].value
-        lat, lon, alt = get_dls2_position(md_keys, md)
+        lat, lon, alt = get_dls2_position(**kw)
 
         misc_dict = {
-            "dls_serialnum": str_or_none("Xmp.DLS.Serial", md_keys, md),
-            "dls_yaw": float_or_zero("Xmp.DLS.Yaw", md_keys, md),  # radians
-            "dls_pitch": float_or_zero("Xmp.DLS.Pitch", md_keys, md),  # radians
-            "dls_roll": float_or_zero("Xmp.DLS.Roll", md_keys, md),  # radians
+            "dls_serialnum": str_or_none("Xmp.DLS.Serial", **kw),
+            "dls_yaw": float_or_zero("Xmp.DLS.Yaw", **kw),  # radians
+            "dls_pitch": float_or_zero("Xmp.DLS.Pitch", **kw),  # radians
+            "dls_roll": float_or_zero("Xmp.DLS.Roll", **kw),  # radians
             "dls_latitude": lat,  # float or None
             "dls_longitude": lon,  # float or None
             "dls_altitde": alt,  # float or None
-            "dls_utctime": get_utctime(md_keys, md),  # datetime or None
-            "dls_solarazi": float_or_zero("Xmp.DLS.SolarAzimuth", md_keys, md),
-            "dls_solarzen": float_or_zero("Xmp.DLS.SolarElevation", md_keys, md),
+            "dls_utctime": get_utctime(**kw),  # datetime or None
+            "dls_solarazi": float_or_zero("Xmp.DLS.SolarAzimuth", **kw),
+            "dls_solarzen": float_or_zero("Xmp.DLS.SolarElevation", **kw),
+            "GPSAltitudeRef": float_or_zero("Exif.GPSInfo.GPSAltitudeRef", **kw),
+            "GPSDOP": float_or_zero("Exif.GPSInfo.GPSDOP", **kw),
+            "Xmp.Camera.GPSXYAccuracy": float_or_zero("Xmp.Camera.GPSXYAccuracy", **kw),
+            "Xmp.Camera.GPSZAccuracy": float_or_zero("Xmp.Camera.GPSZAccuracy", **kw),
             "camera_model": camera_model,
             "firmware_version": firmware_version,
             "camera_make": md["Exif.Image.Make"].value,
             "flight_id": md["Xmp.MicaSense.FlightId"].value,
             "capture_id": md["Xmp.MicaSense.CaptureId"].value,
-            "dls_firmware_version": str_or_none("Xmp.DLS.SwVersion", md_keys, md),
+            "dls_firmware_version": str_or_none("Xmp.DLS.SwVersion", **kw),
             "image_size": [
                 int(md["Exif.Image.ImageWidth"].value),
                 int(md["Exif.Image.ImageLength"].value),
@@ -535,17 +540,17 @@ def band_dict_from_file(
             "panel_region": panel_region,
             "panel_serial": panel_serial,
             "auto_calibration_image": auto_cal_image,
-            "dls_present": dls_present(md_keys, md),
+            "dls_present": dls_present(**kw),
             "band_name": md["Xmp.Camera.BandName"].value,
-            "dls_Ed": float_or_zero("Xmp.DLS.SpectralIrradiance", md_keys, md),
-            "dls_Ed_h": float_or_zero("Xmp.DLS.HorizontalIrradiance", md_keys, md),
-            "dls_Ed_d": float_or_zero("Xmp.DLS.DirectIrradiance", md_keys, md),
-            "dls_Ed_s": float_or_zero("Xmp.DLS.ScatteredIrradiance", md_keys, md),
+            "dls_Ed": float_or_zero("Xmp.DLS.SpectralIrradiance", **kw),
+            "dls_Ed_h": float_or_zero("Xmp.DLS.HorizontalIrradiance", **kw),
+            "dls_Ed_d": float_or_zero("Xmp.DLS.DirectIrradiance", **kw),
+            "dls_Ed_s": float_or_zero("Xmp.DLS.ScatteredIrradiance", **kw),
             "dls_EstimatedDirectLightVector": asfloats_or_none(
-                "Xmp.DLS.EstimatedDirectLightVector", md_keys, md
+                "Xmp.DLS.EstimatedDirectLightVector", **kw
             ),
-            "dls_wavelength": float_or_zero("Xmp.DLS.CenterWavelength", md_keys, md),
-            "dls_bandwidth": float_or_zero("Xmp.DLS.Bandwidth", md_keys, md),
+            "dls_wavelength": float_or_zero("Xmp.DLS.CenterWavelength", **kw),
+            "dls_bandwidth": float_or_zero("Xmp.DLS.Bandwidth", **kw),
             "blacklevel": mean_level(md["Exif.Image.BlackLevel"].value),
             "darkpixels": mean_level(md["Xmp.MicaSense.DarkRowValue"].value),
             "exposure": float(md["Exif.Photo.ExposureTime"].value),
@@ -568,7 +573,7 @@ def band_dict_from_file(
             "band_sensitivity": float(md["Xmp.Camera.BandSensitivity"].value),
             "camera_serialnum": md["Exif.Photo.BodySerialNumber"].value,
             "supports_radiometric_cal": supports_radiometric_calibration(md_keys),
-            "irradiance_scale_factor": irradiance_scale_factor(md_keys, md),
+            "irradiance_scale_factor": irradiance_scale_factor(**kw),
             "horizontal_irradiance_valid": horizontal_irradiance_valid(
                 md_keys, firmware_version, camera_model
             ),
@@ -585,14 +590,17 @@ def get_syncxxxxset_folders(mpath: Path) -> Tuple[List[str], List[str]]:
     folder names, which should be "red_cam" and "blue_cam".
     """
     sync_d, cam_d = [], []
-    exclude_dirs = ["gcps", "homogr_mat", "kml", "metadata", "rets", "rgb"]
     for d in sorted(mpath.glob("**/SYNC*SET")):
         if d.is_file():
             continue
+
         parent_d = d.parts[-2]
-        if parent_d in exclude_dirs:
-            continue
-        cam_d.append(parent_d)
+        if "cam" in parent_d.lower():
+            if "red" in parent_d.lower():
+                cam_d.append(parent_d)
+            if "blue" in parent_d.lower():
+                cam_d.append(parent_d)
+
         sync_d.append(d.name)
 
     return list(set(sync_d)), list(set(cam_d))

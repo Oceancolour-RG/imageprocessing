@@ -24,22 +24,23 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
 import cv2
-import imageio
-import warnings
 import rasterio
 import numpy as np
 import numexpr as ne
 import multiprocessing
 
 from pathlib import Path
+from imageio import imwrite
+from warnings import filterwarnings
 from skimage.morphology import disk
 from skimage.util import img_as_ubyte
 from skimage.filters import rank, gaussian
 from typing import Union, List, Tuple, Optional
 
-
-import micasense.capture as capture
-import micasense.plotutils as plotutils
+from micasense.tags import add_exif
+from micasense.capture import Capture
+from micasense.load_yaml import load_all
+from micasense.plotutils import plotwithcolorbar, plot_overlay_withcolorbar
 
 
 def min_ix(arr: np.ndarray, v: float) -> int:
@@ -48,7 +49,7 @@ def min_ix(arr: np.ndarray, v: float) -> int:
 
 def normalize(im, min=None, max=None):
     width, height = im.shape
-    norm = np.zeros((width, height), dtype=np.float32)
+    norm = np.zeros((width, height), dtype="float32")
     if min is not None and max is not None:
         norm = (im - min) / (max - min)
     else:
@@ -108,7 +109,7 @@ def compute_nonlinear_index(b1: np.ndarray, b2: np.ndarray) -> np.ndarray:
 
 
 def get_ndwi(
-    ms_capture: capture.Capture,
+    ms_capture: Capture,
     im_aligned: np.ndarray,
     green_wvl: Union[float, int] = 560,
     nir_wvl: Union[float, int] = 842,
@@ -122,11 +123,11 @@ def get_ndwi(
 
     Parameters
     ----------
-    ms_capture : capture.Capture
+    ms_capture : Capture
         Capture object (a set of micasense.image.Images) taken by a single or
         a pair (e.g. dual camera) of Micasense camera(s), which share the same
         unique identifier (capture id).
-    im_aligned : np.ndarray, (dtype=np.float32)
+    im_aligned : np.ndarray, (dtype=float32)
         The stack of aligned (or unaligned) images.
     green_wvl : float, int
         wavelength of green band (default=560 nm)
@@ -151,7 +152,7 @@ def get_ndwi(
 
 
 def get_ndvi(
-    ms_capture: capture.Capture,
+    ms_capture: Capture,
     im_aligned: np.ndarray,
     red_wvl: Union[float, int] = 668,
     nir_wvl: Union[float, int] = 842,
@@ -164,11 +165,11 @@ def get_ndvi(
 
     Parameters
     ----------
-    ms_capture : capture.Capture
+    ms_capture : Capture
         Capture object (a set of micasense.image.Images) taken by a single or
         a pair (e.g. dual camera) of Micasense camera(s), which share the same
         unique identifier (capture id).
-    im_aligned : np.ndarray, (dtype=np.float32)
+    im_aligned : np.ndarray, (dtype=float32)
         The stack of aligned (or unaligned) images.
     red_wvl : float, int
         wavelength of green band (default=668 nm)
@@ -193,14 +194,14 @@ def get_ndvi(
     return np.array(ndvi, order="C", dtype="float64")
 
 
-def relatives_ref_band(ms_capture: capture.Capture) -> int:
+def relatives_ref_band(ms_capture: Capture) -> int:
     for img in ms_capture.images:
         if img.rig_xy_offset_in_px() == (0, 0):
             return img.band_index()
     return 0
 
 
-def translation_from_ref(ms_capture: capture.Capture, band, ref=4) -> None:
+def translation_from_ref(ms_capture: Capture, band, ref=4) -> None:
     x, y = ms_capture.images[band].rig_xy_offset_in_px()
     rx, ry = ms_capture.images[ref].rig_xy_offset_in_px()
     return None
@@ -242,12 +243,12 @@ def align(pair: dict) -> dict:
 
     # Initialize the matrix to identity
     if warp_mode == cv2.MOTION_HOMOGRAPHY:
-        # warp_matrix = np.array([[1,0,0],[0,1,0],[0,0,1]], dtype=np.float32)
+        # warp_matrix = np.array([[1,0,0],[0,1,0],[0,0,1]], dtype=float32)
         warp_matrix = pair["warp_matrix_init"]
     else:
-        # warp_matrix = np.array([[1,0,0],[0,1,0]], dtype=np.float32)
+        # warp_matrix = np.array([[1,0,0],[0,1,0]], dtype=float32)
         warp_matrix = np.array(
-            [[1, 0, translations[1]], [0, 1, translations[0]]], dtype=np.float32
+            [[1, 0, translations[1]], [0, 1, translations[0]]], dtype="float32"
         )
 
     w = pair["ref_image"].shape[1]
@@ -318,12 +319,10 @@ def align(pair: dict) -> dict:
 
             if show_debug_images:
 
-                plotutils.plotwithcolorbar(gray1_pyr[level], "ref level {}".format(level))
-                plotutils.plotwithcolorbar(
-                    gray2_pyr[level], "match level {}".format(level)
-                )
-                plotutils.plotwithcolorbar(grad1, "ref grad level {}".format(level))
-                plotutils.plotwithcolorbar(grad2, "match grad level {}".format(level))
+                plotwithcolorbar(gray1_pyr[level], "ref level {}".format(level))
+                plotwithcolorbar(gray2_pyr[level], "match level {}".format(level))
+                plotwithcolorbar(grad1, "ref grad level {}".format(level))
+                plotwithcolorbar(grad2, "match grad level {}".format(level))
                 print("Starting warp for level {} is:\n {}".format(level, warp_matrix))
 
             try:
@@ -349,11 +348,11 @@ def align(pair: dict) -> dict:
                 # the next (larger image) pyramid level
                 if warp_mode == cv2.MOTION_HOMOGRAPHY:
                     warp_matrix = warp_matrix * np.array(
-                        [[1, 1, 2], [1, 1, 2], [0.5, 0.5, 1]], dtype=np.float32
+                        [[1, 1, 2], [1, 1, 2], [0.5, 0.5, 1]], dtype="float32"
                     )
                 else:
                     warp_matrix = warp_matrix * np.array(
-                        [[1, 1, 2], [1, 1, 2]], dtype=np.float32
+                        [[1, 1, 2], [1, 1, 2]], dtype="float32"
                     )
 
     return {
@@ -365,13 +364,13 @@ def align(pair: dict) -> dict:
 
 def default_warp_matrix(warp_mode):
     if warp_mode == cv2.MOTION_HOMOGRAPHY:
-        return np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+        return np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype="float32")
     else:
-        return np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
+        return np.array([[1, 0, 0], [0, 1, 0]], dtype="float32")
 
 
 def refine_alignment_warp(
-    ms_capture: capture.Capture,
+    ms_capture: Capture,
     ref_index: int = 4,
     warp_mode: int = cv2.MOTION_HOMOGRAPHY,
     max_iterations: int = 2500,
@@ -385,7 +384,7 @@ def refine_alignment_warp(
 
     Parameters
     ----------
-    ms_capture : capture.Capture
+    ms_capture : Capture
         Capture object (a set of micasense.image.Images) taken by a single or
         a pair (e.g. dual camera) of Micasense camera(s), which share the same
         unique identifier (capture id).
@@ -446,7 +445,7 @@ def refine_alignment_warp(
                     "match_index": i,
                     "match_image": img.undistorted(img.radiance()).astype("float32"),
                     "translations": translations,
-                    "warp_matrix_init": np.array(warp_matrices_init[i], dtype=np.float32),
+                    "warp_matrix_init": np.array(warp_matrices_init[i], dtype="float32"),
                     "debug": debug,
                     "pyramid_levels": pyramid_levels,
                 }
@@ -516,7 +515,7 @@ def warp_matrices_wrapper(
 ) -> List[np.ndarray]:
     """wrapper to create/save or load the warp matrices"""
     if not warp_npy_file.exists():
-        wrp_capture = capture.Capture.from_yaml(uav_yaml_file)
+        wrp_capture = Capture.from_yaml(uav_yaml_file)
         warp_matrices, _ = refine_alignment_warp(
             ms_capture=wrp_capture,
             ref_index=match_index,
@@ -524,7 +523,7 @@ def warp_matrices_wrapper(
             warp_mode=warp_mode,
             pyramid_levels=pyramid_levels,
         )
-        np.save(warp_npy_file, np.array(warp_matrices, order="C", dtype=np.float64))
+        np.save(warp_npy_file, np.array(warp_matrices, order="C", dtype="float64"))
 
     else:
         warp_matrices = load_warp_matrices(warp_npy_file)
@@ -534,7 +533,7 @@ def warp_matrices_wrapper(
 
 # apply homography to create an aligned stack
 def aligned_capture_backend(
-    ms_capture: capture.Capture,
+    ms_capture: Capture,
     warp_matrices: List[np.ndarray],
     warp_mode: int = cv2.MOTION_HOMOGRAPHY,
     valid_ix: Optional[List[int]] = None,
@@ -544,7 +543,7 @@ def aligned_capture_backend(
 ) -> np.ndarray:
     width, height = ms_capture.images[0].size()
 
-    im_aligned = np.zeros((height, width, len(warp_matrices)), dtype=np.float32)
+    im_aligned = np.zeros((height, width, len(warp_matrices)), dtype="float32")
 
     for i in range(0, len(warp_matrices)):
         if img_type == "reflectance":
@@ -583,7 +582,7 @@ def aligned_capture_backend(
 
 
 def aligned_capture(
-    ms_capture: capture.Capture,
+    ms_capture: Capture,
     warp_matrices: Optional[Union[List[float], List[np.ndarray]]] = None,
     img_type: Optional[str] = None,
     warp_mode: int = cv2.MOTION_HOMOGRAPHY,
@@ -668,7 +667,7 @@ class Bounds(object):
 
 
 def find_crop_bounds(
-    ms_capture: capture.Capture,
+    ms_capture: Capture,
     registration_transforms: Union[List[float], List[np.ndarray]],
     warp_mode: int = cv2.MOTION_HOMOGRAPHY,
 ) -> Tuple[List[int], List[float]]:
@@ -679,7 +678,7 @@ def find_crop_bounds(
 
     Parameters
     ----------
-    ms_capture : capture.Capture
+    ms_capture : Capture
         Capture object (a set of micasense.image.Images) taken by a single or
         a pair (e.g. dual camera) of Micasense camera(s), which share the same
         unique identifier (capture id).
@@ -853,7 +852,7 @@ def map_points(
     warp_mode=cv2.MOTION_HOMOGRAPHY,
 ):
     # extra dimension makes opencv happy
-    pts = np.array([pts], dtype=np.float64)
+    pts = np.array([pts], dtype="float64")
     new_cam_mat, _ = cv2.getOptimalNewCameraMatrix(
         camera_matrix, distortion_coeffs, image_size, 1
     )
@@ -862,7 +861,7 @@ def map_points(
         new_pts = cv2.transform(new_pts, cv2.invertAffineTransform(warp_matrix))
     if warp_mode == cv2.MOTION_HOMOGRAPHY:
         new_pts = cv2.perspectiveTransform(
-            new_pts, np.linalg.inv(warp_matrix).astype(np.float32)
+            new_pts, np.linalg.inv(warp_matrix).astype("float32")
         )
     # apparently the output order has changed in 4.1.1 (possibly earlier from 3.4.3)
     if cv2.__version__ <= "3.4.4":
@@ -872,7 +871,7 @@ def map_points(
 
 
 def save_capture_as_stack(
-    ms_capture: capture.Capture,
+    ms_capture: Capture,
     im_aligned: np.ndarray,
     out_filename: Union[str, Path],
     img_type: str = "reflectance",
@@ -881,18 +880,18 @@ def save_capture_as_stack(
     compression: str = "lzw",
     odtype: str = "uint16",
 ) -> None:
-    warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+    filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
     """
     Write a geotif (without a defined Affine and CRS projection)
     of a stack of aligned/unaligned images.
 
     Parameters
     ----------
-    ms_capture : capture.Capture
+    ms_capture : Capture
         Capture object (a set of micasense.image.Images) taken by a single or
         a pair (e.g. dual camera) of Micasense camera(s), which share the same
         unique identifier (capture id).
-    im_aligned : np.ndarray, {dtype=np.float32, dims=(nrows, ncols, nbands)}
+    im_aligned : np.ndarray, {dtype=float32, dims=(nrows, ncols, nbands)}
         The stack of aligned (or unaligned) images.
     out_filename : str or Path
         The output geotif filename
@@ -1018,27 +1017,29 @@ def save_capture_as_stack(
 
 
 def save_aligned_individual(
-    ms_capture: capture.Capture,
+    ms_capture: Capture,
     im_aligned: np.ndarray,
     out_basename: str,
-    img_type: str = "reflectance",
+    prod_type: str = "reflectance",
     sort_by_wavelength: bool = True,
     photometric: str = "MINISBLACK",
     compression: str = "lzw",
     odtype: str = "uint16",
+    image_pp: int = 1,
+    yml_fn: Optional[Path] = None,
 ) -> None:
-    warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+    filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
     """
     Write a geotif (without a defined Affine and CRS projection)
     for each band in `im_aligned`
 
     Parameters
     ----------
-    ms_capture : capture.Capture
+    ms_capture : Capture
         Capture object (a set of micasense.image.Images) taken by a single or
         a pair (e.g. dual camera) of Micasense camera(s), which share the same
         unique identifier (capture id).
-    im_aligned : np.ndarray, {dtype=np.float32, dims=(nrows, ncols, nbands)}
+    im_aligned : np.ndarray, {dtype=float32, dims=(nrows, ncols, nbands)}
         The stack of aligned (or unaligned) images.
     out_basename : str
         The output geotif basename, e.g. /path/to/output/IMG_ALIGNED_0251
@@ -1056,6 +1057,17 @@ def save_aligned_individual(
         * see https://exiftool.org/TagNames/EXIF.html#Compression
     odtype : str
         output dtype, options include "uint16", "float32"
+
+    image_pp : int
+        image preprocessing,
+        1 = raw (vignetting + dark current)
+        2 = undistorted (vignetting + dark current + undistorting)
+        3 = aligned (vignetting + dark current + undistorting + alignment)
+
+    yml_fn : Path [Optional]
+        The image set metadata yaml. This is needed to write metadata into
+        the exif tags. If not provided, then exif metadata will not be
+        written to output tifs
     """
 
     def raise_err(user_parm: str, pname: str, allowable: List[str]) -> None:
@@ -1098,40 +1110,17 @@ def save_aligned_individual(
         "compress": ocomp,
     }
 
-    import pyexiv2
-    from fractions import Fraction
-
-    exclude_tags = [
-        "Exif.Image.StripOffsets",
-        "Exif.Image.RowsPerStrip",
-        "Exif.Image.StripByteCounts",
-        "Exif.Image.XMLPacket",
-        "Exif.Photo.ExposureTime",
-        "Exif.Photo.FNumber",
-        "Exif.Photo.ExposureProgram",
-        "Exif.Photo.ISOSpeed",
-        "Exif.Image.0xbb94",
-        "Exif.Image.0xbb95",
-        "Exif.Image.BlackLevelRepeatDim",
-        "Exif.Image.BlackLevel",
-        "Exif.Image.OpcodeList3",
-        "Xmp.Camera.PerspectiveDistortion",
-        "Xmp.Camera.VignettingCenter",
-        "Xmp.Camera.VignettingPolynomial",
-    ]
-    vv = 1000000
-
     for i in range(nbands):
         img = ms_capture.images[i]
+
         # get output name
         bnum = img.path.stem.split("_")[-1]
         ofn = str(out_basename) + f"_{bnum}.tif"
 
-        # write geotif
         bandim = im_aligned[:, :, i]
-        # identify flagged pixels (<=0.0) if img_type == "reflectance"
+        # identify flagged pixels (<=0.0) if prod_type == "reflectance"
         # then pixels with values > 1.0 will also be masked.
-        if img_type == "reflectance":
+        if prod_type == "reflectance":
             flagged_ix = (bandim <= 0) | (bandim > 1.0)
         else:
             flagged_ix = bandim <= 0
@@ -1140,27 +1129,18 @@ def save_aligned_individual(
         with rasterio.open(ofn, "w", **meta) as dst:
             dst.write(np.array(bandim * vis_sfactor, order="C", dtype=odtype), 1)
 
-        # copy exif metadata
-        ini_md = pyexiv2.ImageMetadata(str(img.path))
-        ini_md.read()
+        if yml_fn:
+            add_exif(
+                acq_meta=load_all(yml_fn),
+                tiff_fn=ofn,
+                compression=exif_comp[ocomp],
+                imshape=(nrows, ncols),
+                image_pp=image_pp,
+                image_name=img.path.name,
+                principal_point=f"{img.newcammat_ppx},{img.newcammat_ppy}"
+            )
 
-        for k in exclude_tags:
-            ini_md.__delitem__(k)
-        ini_md.modified = True
-
-        out_md = pyexiv2.metadata.ImageMetadata(ofn)
-        out_md.read()
-        ini_md.copy(out_md, comment=False)
-
-        nn1 = int(img.newcammat_dfx * vv)
-        nn2 = int(img.newcammat_dfy * vv)
-        out_md["Exif.Photo.FocalPlaneXResolution"].value = Fraction(nn1, vv)
-        out_md["Exif.Photo.FocalPlaneYResolution"].value = Fraction(nn2, vv)
-        out_md[
-            "Xmp.Camera.PrincipalPoint"
-        ].value = f"{img.newcammat_ppx},{img.newcammat_ppy}"
-        out_md["Exif.Image.Compression"].value = exif_comp[ocomp]
-        out_md.write()
+    return
 
 
 def save_capture_as_rgb(
@@ -1189,7 +1169,7 @@ def save_capture_as_rgb(
     sharpen: boolean
     rgb_band_indices: List band order
     """
-    im_display = np.zeros(im_aligned.shape, dtype=np.float32)
+    im_display = np.zeros(im_aligned.shape, dtype="float32")
 
     # modify these percentiles to adjust contrast.
     # For many images, 0.5 and 99.5 are good values
@@ -1228,13 +1208,13 @@ def save_capture_as_rgb(
     # closer to what our eyes would see
     if gamma != 0:
         gamma_corr_rgb = unsharp_rgb ** (1.0 / gamma)
-        imageio.imwrite(out_filename, (255 * gamma_corr_rgb).astype("uint8"))
+        imwrite(out_filename, (255 * gamma_corr_rgb).astype("uint8"))
     else:
-        imageio.imwrite(out_filename, (255 * unsharp_rgb).astype("uint8"))
+        imwrite(out_filename, (255 * unsharp_rgb).astype("uint8"))
 
 
 def save_thermal_over_rgb(
-    ms_capture: capture.Capture,
+    ms_capture: Capture,
     im_aligned: np.ndarray,
     out_filename: Union[str, Path],
     fig_size: Tuple[int, int] = (30, 23),
@@ -1258,7 +1238,7 @@ def save_thermal_over_rgb(
 
     im_display = np.zeros(
         (im_aligned.shape[0], im_aligned.shape[1], 3),
-        dtype=np.float32,
+        dtype="float32",
     )
     rgb_band_indices = [
         ms_capture.band_names_lower().index("red"),
@@ -1283,7 +1263,7 @@ def save_thermal_over_rgb(
     min_display_therm = np.percentile(masked_thermal, hist_min_percent)
     max_display_therm = np.percentile(masked_thermal, hist_max_percent)
 
-    fig, _ = plotutils.plot_overlay_withcolorbar(
+    fig, _ = plot_overlay_withcolorbar(
         im_display,
         masked_thermal,
         figsize=fig_size,

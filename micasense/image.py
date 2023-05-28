@@ -167,7 +167,6 @@ class Image(object):
         self.newcammat_ppx = None
         self.newcammat_ppy = None
 
-
         # Note that dls_orientation_vector is only used
         # for processing the DLS1 data. According to the
         # Micasense website:
@@ -534,7 +533,7 @@ class Image(object):
         t_y = math.radians(self.rig_relatives[1]) / px_fov_y
         return (t_x, t_y)
 
-    def undistorted(self, image: np.ndarray, centre_pp: bool=False) -> np.ndarray:
+    def undistorted(self, image: np.ndarray, centre_pp: bool = False) -> np.ndarray:
         """return the undistorted image from input image"""
         # If we have already undistorted the same source, just return that here
         # otherwise, lazy compute the undstorted image

@@ -156,7 +156,7 @@ def add_exif(
         xmptags_md["Xmp.xmp.Camera.RigCameraIndex"] = str(
             acq_meta["image_data"][image_name]["rig_camera_index"]
         )
-        xmptags_md["Xmp.Xmp.Camera.RigRelativesReferenceRigCameraIndex"] = "1"
+        xmptags_md["Xmp.xmp.Camera.RigRelativesReferenceRigCameraIndex"] = "1"
 
         if image_pp == 1:  # raw image
             # copy the principal point
@@ -164,9 +164,9 @@ def add_exif(
                 [f"{_}" for _ in acq_meta["image_data"][image_name]["principal_point"]]
             )
 
-            xmptags_md["Xmp.xmp.Camera.PerspectiveDistortion"] = [
-                f"{_}" for _ in acq_meta["image_data"][image_name]["distortion_params"]
-            ]
+            xmptags_md["Xmp.xmp.Camera.PerspectiveDistortion"] = ",".join(
+                [f"{_}" for _ in acq_meta["image_data"][image_name]["distortion_params"]]
+            )
 
         if image_pp == 2:  # undistored image
             # Undistortion uses cv2.getOptimalNewCameraMatrix, which optimises

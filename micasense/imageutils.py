@@ -1020,12 +1020,12 @@ def save_aligned_individual(
     ms_capture: Capture,
     im_aligned: np.ndarray,
     out_basename: str,
-    prod_type: str = "reflectance",
     sort_by_wavelength: bool = True,
     photometric: str = "MINISBLACK",
     compression: str = "lzw",
     odtype: str = "uint16",
     image_pp: int = 1,
+    flag_opt: int = 0,
     yml_fn: Optional[Path] = None,
 ) -> None:
     filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -1063,6 +1063,11 @@ def save_aligned_individual(
         1 = raw (vignetting + dark current)
         2 = undistorted (vignetting + dark current + undistorting)
         3 = aligned (vignetting + dark current + undistorting + alignment)
+
+    flag_opt : int
+        The type of flagging
+        0 = flag pixels that have values <= 0 (bandim <= 0)
+        1 = flag pixels with values <= 0 or > 1 ((bandim <= 0) | (bandim > 1.0))
 
     yml_fn : Path [Optional]
         The image set metadata yaml. This is needed to write metadata into
@@ -1118,14 +1123,14 @@ def save_aligned_individual(
         ofn = str(out_basename) + f"_{bnum}.tif"
 
         bandim = im_aligned[:, :, i]
-        # identify flagged pixels (<=0.0) if prod_type == "reflectance"
-        # then pixels with values > 1.0 will also be masked.
-        if prod_type == "reflectance":
-            flagged_ix = (bandim <= 0) | (bandim > 1.0)
-        else:
-            flagged_ix = bandim <= 0
+        # mask flags according to `flag_opt`
+        flagged_ix = (bandim <= 0) if flag_opt == 0 else (bandim <= 0) | (bandim > 1.0)
         bandim[flagged_ix] = nodata
 
+        # avoid wrap-around when scaling from float to uint16
+        bandim[bandim > 1.0] = 1.0
+
+        # This scaling only works for reflectance
         with rasterio.open(ofn, "w", **meta) as dst:
             dst.write(np.array(bandim * vis_sfactor, order="C", dtype=odtype), 1)
 
@@ -1137,7 +1142,7 @@ def save_aligned_individual(
                 imshape=(nrows, ncols),
                 image_pp=image_pp,
                 image_name=img.path.name,
-                principal_point=f"{img.newcammat_ppx},{img.newcammat_ppy}"
+                principal_point=f"{img.newcammat_ppx},{img.newcammat_ppy}",
             )
 
     return

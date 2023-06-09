@@ -879,6 +879,7 @@ def save_capture_as_stack(
     photometric: str = "MINISBLACK",
     compression: str = "lzw",
     odtype: str = "uint16",
+    yml_fn: Optional[Path] = None,
 ) -> None:
     filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
     """
@@ -909,6 +910,11 @@ def save_capture_as_stack(
         * see https://exiftool.org/TagNames/EXIF.html#Compression
     odtype : str
         output dtype, options include "uint16", "float32"
+
+    yml_fn : Path [Optional]
+        The image set metadata yaml. This is needed to write metadata into
+        the exif tags. If not provided, then exif metadata will not be
+        written to output tifs
     """
 
     def raise_err(user_parm: str, pname: str, allowable: List[str]) -> None:
@@ -921,6 +927,15 @@ def save_capture_as_stack(
 
     ocomp = compression.lower()
     avail_comp = ["jpeg", "lzw", "packbits", "deflate", "webp", "none"]
+    exif_comp = {
+        "jpeg": 7,
+        "lzw": 5,
+        "packbits": 32773,
+        "deflate": 32946,
+        "webp": 34927,
+        "none": 1,
+    }
+
     raise_err(ocomp, "compression", avail_comp)
 
     vis_sfactor, thermal_sfactor, thermal_offset = 1.0, 1.0, 0.0
@@ -1014,6 +1029,17 @@ def save_capture_as_stack(
 
     if not Path(out_filename).exists():
         raise Exception(f"issue with writing {out_filename}")
+
+    if yml_fn:
+        add_exif(
+            acq_meta=load_all(yml_fn),
+            tiff_fn=out_filename,
+            compression=exif_comp[ocomp],
+            imshape=(nrows, ncols),
+            image_pp=4,  # hope retrievals - hack for multilayered tiffs
+            image_name=None,
+            principal_point=None,
+        )
 
 
 def save_aligned_individual(

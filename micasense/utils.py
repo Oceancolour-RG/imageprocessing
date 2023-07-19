@@ -21,7 +21,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import cv2
 import numpy as np
-from typing import Tuple
+from typing import Union, Tuple
 import micasense.metadata2 as metadata
 
 
@@ -149,3 +149,70 @@ def correct_lens_distortion(
 
     # compute the undistorted 16 bit image
     return cv2.remap(image, map1, map2, cv2.INTER_LINEAR)
+
+
+def get_ave_focallen(acq_meta: dict, as_str: bool = True) -> Union[float, str]:
+    """
+    Get the average focal length across all micasense sensors. This is
+    useful after undistorting and inter-band homography alignment
+    """
+    sum_fl, cnt = 0.0, 0.0
+    for k in acq_meta["image_data"]:
+        sum_fl += acq_meta["image_data"][k]["focal_length_mm"]
+        cnt += 1
+
+    if as_str:
+        # when the value is stored as exif tag
+        return f"{sum_fl / cnt}"
+    else:
+        return sum_fl / cnt
+
+
+def get_ave_pc(
+    acq_meta: dict, as_str: bool = True, in_pixels: bool = False, xy: bool = True
+) -> Union[Tuple[float, float], str]:
+    """
+    Get the average principal centre across all micasense sensors. This is
+    useful after undistorting and inter-band homography alignment
+
+    Parameters
+    ----------
+    acq_meta : dict
+        image metadata
+
+    in_pixels : bool
+        whether to return the principal in pixels (True) or
+        in millimetres (False)
+
+    xy : bool
+        if True,  return (pc_x, pc_y)
+        if False, return (pc_y, pc_x)
+
+    as_str : bool
+        whether to return a string "pc_x,pc_y"
+        where,
+        pc_x = principal point in the x-axis (mm or pixels)
+        pc_y = principal point in the y-axis (mm or pixels)
+        The order of pc_x and pc_y depends on `xy`
+    """
+
+    sum_pcx, sum_pcy, cnt = 0.0, 0.0, 0.0
+    for k in acq_meta["image_data"]:
+        pc_x, pc_y = acq_meta["image_data"][k]["principal_point"]
+
+        sum_pcx += pc_x
+        sum_pcy += pc_y
+        cnt += 1
+
+    ave_pcx = sum_pcx / cnt  # mm
+    ave_pcy = sum_pcy / cnt  # mm
+
+    if in_pixels:  # convert to pixels
+        ave_pcx *= acq_meta["focalplane_xres"]
+        ave_pcy *= acq_meta["focalplane_yres"]
+
+    if xy:
+        return f"{ave_pcx},{ave_pcy}" if as_str else (ave_pcx, ave_pcy)
+
+    else:
+        return f"{ave_pcy},{ave_pcx}" if as_str else (ave_pcy, ave_pcx)

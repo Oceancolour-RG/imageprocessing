@@ -5,6 +5,8 @@ from pathlib import Path
 from fractions import Fraction
 from typing import Tuple, Optional
 
+from .utils import get_ave_focallen, get_ave_pc
+
 
 def ddeg_to_fraction(ddeg: float, islat: bool) -> Tuple[str, Tuple[Fraction]]:
 
@@ -24,15 +26,6 @@ def ddeg_to_fraction(ddeg: float, islat: bool) -> Tuple[str, Tuple[Fraction]]:
     ]
 
     return ref, frac_deg
-
-
-def get_ave_focallen(acq_meta: dict) -> str:
-    sum_fl, cnt = 0.0, 0.0
-    for k in acq_meta["image_data"]:
-        sum_fl += acq_meta["image_data"][k]["focal_length_mm"]
-        cnt += 1
-
-    return f"{sum_fl / cnt}"
 
 
 def add_exif(
@@ -139,9 +132,7 @@ def add_exif(
     if image_pp >= 3:  # aligned image or retrieval product
         # Unclear what the homography does to the principal point and focal
         # length. Let's assume that the average is taken across all images.
-        xmptags_md[
-            "Xmp.xmp.Camera.PrincipalPoint"
-        ] = f"{(ncols-1)/(2 * dfx)},{(nrows-1)/(2 * dfy)}"
+        xmptags_md["Xmp.xmp.Camera.PrincipalPoint"] = get_ave_pc(acq_meta)
         xmptags_md["Xmp.xmp.Camera.PerspectiveFocalLength"] = get_ave_focallen(acq_meta)
 
     else:

@@ -43,6 +43,17 @@ from micasense.load_yaml import load_all
 from micasense.plotutils import plotwithcolorbar, plot_overlay_withcolorbar
 
 
+AVAIL_COMP = ["jpeg", "lzw", "packbits", "deflate", "webp", "none"]
+EXIF_COMP = {
+    "jpeg": 7,
+    "lzw": 5,
+    "packbits": 32773,
+    "deflate": 32946,
+    "webp": 34927,
+    "none": 1,
+}
+
+
 def min_ix(arr: np.ndarray, v: float) -> int:
     return int(abs(arr - v).argmin())
 
@@ -546,10 +557,13 @@ def aligned_capture_backend(
     im_aligned = np.zeros((height, width, len(warp_matrices)), dtype="float32")
 
     for i in range(0, len(warp_matrices)):
+
+        # the undistored radiance or reflectance has been calculated in
+        # `aligned_capture()`, thus enforce force_recompute=False
         if img_type == "reflectance":
-            img = ms_capture.images[i].undistorted_reflectance()
+            img = ms_capture.images[i].undistorted_reflectance(force_recompute=False)
         else:
-            img = ms_capture.images[i].undistorted_radiance()
+            img = ms_capture.images[i].undistorted_radiance(force_recompute=False)
 
         if warp_mode != cv2.MOTION_HOMOGRAPHY:
             im_aligned[:, :, i] = cv2.warpAffine(
@@ -586,8 +600,9 @@ def aligned_capture(
     warp_matrices: Optional[Union[List[float], List[np.ndarray]]] = None,
     img_type: Optional[str] = None,
     warp_mode: int = cv2.MOTION_HOMOGRAPHY,
-    irradiance_list: Optional[List[float]] = None,
     crop_edges: bool = True,
+    irradiance: Optional[List[float]] = None,
+    use_darkpixels: bool = True,
 ) -> np.ndarray:
     """
     Creates aligned Capture. Computes undistorted radiance
@@ -595,31 +610,52 @@ def aligned_capture(
 
     Parameters
     ----------
-    irradiance_list: List of mean panel region irradiance.
-    warp_matrices: 2d List of warp matrices derived from Capture.get_warp_matrices()
-    img_type: str 'radiance' or 'reflectance' depending on image metadata.
-    warp_mode: OpenCV import.
+    ms_capture : Capture
+        .
+    warp_matrices : List[np.ndarray]
+        List of warp matrices derived from Capture.get_warp_matrices()
+    img_type : str
+        'radiance' or 'reflectance' depending on image metadata.
+    warp_mode : int
         Also known as warp_mode. MOTION_HOMOGRAPHY or MOTION_AFFINE.
         For Altum images only use HOMOGRAPHY.
+    crop_edges : bool
+        .
+    irradiance : List[float] or None
+        Irradiance spectrum (band-ordered not wavelength-ordered) or None
+    use_darkpixels : bool
+        Whether to use the `dark_pixels` (True) or `black_level` (False).
+        Note:
+        `black_level` has a temporally constant value of 4800 across all bands.
+        This is unrealistic as the dark current increases with sensor temperature.
+        `dark_pixels` the averaged DN of the optically covered pixel values. This
+        value is different for each band and varies across an acquisition, presu-
+        mably from increases in temperature.
+
 
     Returns
     -------
     np.ndarray with alignment changes
     """
-    if (
-        img_type is None
-        and irradiance_list is None
-        and ms_capture.dls_irradiance() is None
-    ):
-        ms_capture.compute_undistorted_radiance()
-        img_type = "radiance"
+    if not img_type and irradiance is None:
+        img_type = "radiance" if ms_capture.dls_irradiance() is None else "reflectance"
 
-    elif img_type is None:
-        if irradiance_list is None:
-            # why 0 is appended to the dls irradiance??
-            irradiance_list = ms_capture.dls_irradiance() + [0]
-        ms_capture.compute_undistorted_reflectance(irradiance_list)
-        img_type = "reflectance"
+    # compute the radiance or reflectance
+    if img_type == "radiance":
+        ms_capture.compute_undistorted_radiance(
+            use_darkpixels=use_darkpixels, force_recompute=True
+        )  # radiance is stored in ms_capture.image.__radiance_image
+
+    elif img_type == "reflectance":
+        if irradiance is None:
+            # why is [0] appended to the dls irradiance??
+            irradiance = ms_capture.dls_irradiance() + [0]
+
+        ms_capture.compute_undistorted_reflectance(
+            irradiance=irradiance, use_darkpixels=use_darkpixels, force_recompute=True
+        )  # reflectance is stored in ms_capture.image.__reflectance_image
+    else:
+        raise ValueError("`img_type` must either be 'radiance', 'reflectance' or None")
 
     if warp_matrices is None:
         warp_matrices = ms_capture.get_warp_matrices()
@@ -880,6 +916,7 @@ def save_capture_as_stack(
     compression: str = "lzw",
     odtype: str = "uint16",
     yml_fn: Optional[Path] = None,
+    other_ds: Optional[dict] = None,
 ) -> None:
     filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
     """
@@ -915,6 +952,17 @@ def save_capture_as_stack(
         The image set metadata yaml. This is needed to write metadata into
         the exif tags. If not provided, then exif metadata will not be
         written to output tifs
+    other_ds : Dict [Optional]
+        A dictionary of additional dataset to be added as bands in the
+        tif file, e.g.
+        other_ds = {
+            "vzen": {  uint16 = float_data * scale + offset
+                "data": vzen,  # np.ndarray, float32/64
+                "info": "view zenith angle",
+                "scale": 728.1555555555556,  # float
+                "offset": 1,  # float
+            }
+        }
     """
 
     def raise_err(user_parm: str, pname: str, allowable: List[str]) -> None:
@@ -922,29 +970,18 @@ def save_capture_as_stack(
             raise ValueError(f"specified {pname} ('{user_parm}') not in {allowable}")
 
     odtype = odtype.lower()
-    avail_odt = ["uint16", "float32"]
+    avail_odt = ["uint16", "float32", "float64"]
     raise_err(odtype, "odtype", avail_odt)
 
     ocomp = compression.lower()
-    avail_comp = ["jpeg", "lzw", "packbits", "deflate", "webp", "none"]
-    exif_comp = {
-        "jpeg": 7,
-        "lzw": 5,
-        "packbits": 32773,
-        "deflate": 32946,
-        "webp": 34927,
-        "none": 1,
-    }
-
-    raise_err(ocomp, "compression", avail_comp)
+    raise_err(ocomp, "compression", AVAIL_COMP)
 
     vis_sfactor, thermal_sfactor, thermal_offset = 1.0, 1.0, 0.0
     np_odt = np.dtype(odtype)
     nodata = np_odt.type(-9999.0)
     if odtype == "uint16":
         vis_sfactor = np.iinfo(np.dtype(odtype)).max
-        thermal_sfactor = 100.0
-        thermal_offset = 273.15
+        thermal_sfactor, thermal_offset = 100.0, 273.15
         nodata = np_odt.type(0)
 
     nrows, ncols, nbands = im_aligned.shape
@@ -962,7 +999,7 @@ def save_capture_as_stack(
         "nodata": nodata,
         "width": ncols,
         "height": nrows,
-        "count": nbands,
+        "count": nbands if not other_ds else nbands + len(other_ds),
         "compress": ocomp,
         "tiled": True,
         "blockxsize": int(ncols) // 5,
@@ -987,14 +1024,10 @@ def save_capture_as_stack(
             bandim[flagged_ix] = nodata
 
             # convert bandim from float32 to uint16.
-            dst.write(
-                np.array(bandim * vis_sfactor, order="C", dtype=odtype),
-                indexes=out_bix + 1,
-            )
-            dst.set_band_description(out_bix + 1, f"{wavel[in_bix]} (Band{in_bix+1:02d})")
+            z_idx = out_bix + 1
+            dst.write(np.array(bandim * vis_sfactor, dtype=odtype), indexes=z_idx)
+            dst.set_band_description(z_idx, f"{wavel[in_bix]} (Band{in_bix+1:02d})")
             vis_wavel += f"{wavel[in_bix]},"
-        if vis_wavel.endswith(","):
-            vis_wavel = vis_wavel[0:-1]
 
         # iterate through the thermal bands
         for out_bix, in_bix in enumerate(ms_capture.lw_indices()):
@@ -1003,20 +1036,41 @@ def save_capture_as_stack(
             if odtype == "uint16":
                 bandim[bandim > vis_sfactor] = vis_sfactor
 
-            dst.write(bandim.asdtype(odtype), indexes=len(eo_list) + out_bix + 1)
-            # dst.set_band_description(len(eo_list) + out_bix + 1, f"LWIR {out_bix+1}")
+            z_idx = len(eo_list) + out_bix + 1
+            dst.write(bandim.asdtype(odtype), indexes=z_idx)
+            dst.set_band_description(z_idx, f"LWIR {in_bix+1}")
 
-        # NOTE: The following tags are written into the EXIF/XMP
-        #       "GDAL Metadata" metadata tag.  Annoyingly, these
-        #       tags are not accessible with pyexiv2, but can be
-        #       accessed with rasterio;
+        # append any additional datasets
+        if other_ds:
+            out_bix += 1
+            for i, k in enumerate(other_ds):
+                z_idx = out_bix + i + 1
+                # perform datatype conversion using the scale and offset values
+                scale = other_ds[k]["scale"]
+                offset = other_ds[k]["offset"]
+
+                scaled_d = other_ds[k]["data"] * scale + offset
+                scaled_d[scaled_d > vis_sfactor] = vis_sfactor
+
+                dst.write(scaled_d.astype(odtype), indexes=z_idx)
+                dst.set_band_description(z_idx, other_ds[k]["info"])
+                eval(f"dst.update_tags(B{z_idx}_scale_{k}=scale)")
+                eval(f"dst.update_tags(B{z_idx}_offset_{k}=offset)")
+
+        # NOTE: The following tags are written into the EXIF/XMP "GDAL Metadata"
+        #       metadata tag. Annoyingly, these tags are not accessible with
+        #       pyexiv2, but can be accessed with rasterio
         #       >>> with rasterio.open(tfile, "r") as src:
         #       >>>     custom_tags = src.tags()  # dict
         #       >>> solar_zenith = custom_tags["solarzenith"]  # float
         if vis_sfactor:
             dst.update_tags(vis_sfactor=vis_sfactor)
+
         if vis_wavel:
+            if vis_wavel.endswith(","):
+                vis_wavel = vis_wavel[0:-1]
             dst.update_tags(vis_wavel=vis_wavel)
+
         if thermal_sfactor:
             dst.update_tags(thermal_sfactor=thermal_sfactor)
         if thermal_offset:
@@ -1034,7 +1088,7 @@ def save_capture_as_stack(
         add_exif(
             acq_meta=load_all(yml_fn),
             tiff_fn=out_filename,
-            compression=exif_comp[ocomp],
+            compression=EXIF_COMP[ocomp],
             imshape=(nrows, ncols),
             image_pp=4,  # hope retrievals - hack for multilayered tiffs
             image_name=None,
@@ -1106,20 +1160,11 @@ def save_aligned_individual(
             raise ValueError(f"specified {pname} ('{user_parm}') not in {allowable}")
 
     odtype = odtype.lower()
-    avail_odt = ["uint16", "float32"]
+    avail_odt = ["uint16", "float32", "float64"]
     raise_err(odtype, "odtype", avail_odt)
 
     ocomp = compression.lower()
-    avail_comp = ["jpeg", "lzw", "packbits", "deflate", "webp", "none"]
-    exif_comp = {
-        "jpeg": 7,
-        "lzw": 5,
-        "packbits": 32773,
-        "deflate": 32946,
-        "webp": 34927,
-        "none": 1,
-    }
-    raise_err(ocomp, "compression", avail_comp)
+    raise_err(ocomp, "compression", AVAIL_COMP)
 
     vis_sfactor = 1.0
     np_odt = np.dtype(odtype)
@@ -1164,7 +1209,7 @@ def save_aligned_individual(
             add_exif(
                 acq_meta=load_all(yml_fn),
                 tiff_fn=ofn,
-                compression=exif_comp[ocomp],
+                compression=EXIF_COMP[ocomp],
                 imshape=(nrows, ncols),
                 image_pp=image_pp,
                 image_name=img.path.name,

@@ -35,11 +35,10 @@ from os.path import isfile
 from typing import Union, List, Optional, Tuple
 from pysolar.solar import get_altitude, get_azimuth
 
-import micasense.image as image
-import micasense.load_yaml as ms_yaml
-import micasense.plotutils as plotutils
-
-from micasense.panel import Panel
+from .image import Image
+from .panel import Panel
+from .load_yaml import load_all
+from .plotutils import subplotwithcolorbar, subplot
 
 
 class Capture(object):
@@ -52,13 +51,13 @@ class Capture(object):
 
     def __init__(
         self,
-        images: Union[image.Image, List[image.Image]],
+        images: Union[Image, List[Image]],
         panel_corners: Optional[List[int]] = None,
     ):
         """
         Parameters
         ----------
-        images: image.Image, List[image.Image]
+        images: Image, List[Image]
 
             system file paths.
             Class is typically created using from_file(str or Path),
@@ -80,13 +79,13 @@ class Capture(object):
             variable will be None for aerial captures. You can populate this for
             panel captures by calling detect_panels().
         """
-        err_msg = "Provide an image.Image or List[image.Image] to create a Capture."
-        if isinstance(images, image.Image):
-            self.images = [images]
+        err_msg = "Provide an Image or List[Image] to create a Capture."
+        if isinstance(images, Image):
+            self.images = [images]  # a single image
         elif isinstance(images, list):
-            # ensure that the list only contains image.Image objects
-            if all(type(i) is image.Image for i in images):
-                self.images = images
+            # ensure that the list only contains Image objects
+            if all(type(i) is Image for i in images):
+                self.images = images  # a list of images
             else:
                 raise RuntimeError(err_msg)
         else:
@@ -139,7 +138,7 @@ class Capture(object):
         Add an Image to the Capture using a file path.
         :param filename: str system file path.
         """
-        self.append_image(image.Image(filename))
+        self.append_image(Image(filename))
 
     @classmethod
     def from_file(cls, filename: Union[Path, str]):
@@ -153,7 +152,7 @@ class Capture(object):
         -------
         Capture object.
         """
-        return cls(image.Image(image_path=filename))
+        return cls(Image(image_path=filename))
 
     @classmethod
     def from_filelist(cls, file_list: Union[List[Path], List[str]]):
@@ -175,7 +174,7 @@ class Capture(object):
                     "All files in file list must be a file. "
                     f"The following file is not:\n{f}"
                 )
-        images = [image.Image(image_path=f) for f in file_list]
+        images = [Image(image_path=f) for f in file_list]
         return cls(images)
 
     @classmethod
@@ -198,7 +197,7 @@ class Capture(object):
         -------
         Capture object.
         """
-        d = ms_yaml.load_all(yaml_file=yaml_file)
+        d = load_all(yaml_file=yaml_file)
         if base_path is None:
             base_path = Path(d["base_path"])
         else:  # Path or str
@@ -211,7 +210,7 @@ class Capture(object):
             raise FileNotFoundError(f"'{base_path}' does not exist")
 
         images = [
-            image.Image(
+            Image(
                 image_path=base_path / d["image_data"][key]["filename"],
                 metadata_dict=d,
             )
@@ -260,11 +259,9 @@ class Capture(object):
             ]
         num_rows = int(math.ceil(float(len(self.images)) / float(num_cols)))
         if color_bar:
-            return plotutils.subplotwithcolorbar(
-                num_rows, num_cols, images, titles, fig_size
-            )
+            return subplotwithcolorbar(num_rows, num_cols, images, titles, fig_size)
         else:
-            return plotutils.subplot(num_rows, num_cols, images, titles, fig_size)
+            return subplot(num_rows, num_cols, images, titles, fig_size)
 
     def __lt__(self, other):
         return self.utc_time() < other.utc_time()
@@ -374,14 +371,14 @@ class Capture(object):
         """Compute (if necessary) and plot vignette correction images."""
         self.__plot([img.vignette()[0].T for img in self.images], plot_type="Vignette")
 
-    def plot_radiance(self):
+    def plot_radiance(self, **kw):
         """Compute (if necessary) and plot radiance images."""
-        self.__plot([img.radiance() for img in self.images], plot_type="Radiance")
+        self.__plot([img.radiance(**kw) for img in self.images], plot_type="Radiance")
 
-    def plot_undistorted_radiance(self):
+    def plot_undistorted_radiance(self, **kw):
         """Compute (if necessary) and plot undistorted radiance images."""
         self.__plot(
-            [img.undistorted(img.radiance()) for img in self.images],
+            [img.undistorted(img.radiance(**kw)) for img in self.images],
             plot_type="Undistorted Radiance",
         )
 
@@ -401,65 +398,122 @@ class Capture(object):
             plot_type="Undistorted Reflectance",
         )
 
-    def compute_radiance(self) -> None:
+    def compute_radiance(
+        self, force_recompute: bool = True, use_darkpixels: bool = True
+    ) -> None:
         """Compute Image radiances"""
-        [img.radiance() for img in self.images]
+        [
+            img.radiance(force_recompute=force_recompute, use_darkpixels=use_darkpixels)
+            for img in self.images
+        ]
 
-    def compute_undistorted_radiance(self) -> None:
+    def compute_undistorted_radiance(
+        self, force_recompute=True, use_darkpixels: bool = True
+    ) -> None:
         """Compute Image undistorted radiance."""
-        [img.undistorted_radiance() for img in self.images]
+        [
+            img.undistorted_radiance(
+                force_recompute=force_recompute, use_darkpixels=use_darkpixels
+            )
+            for img in self.images
+        ]
 
-    def compute_reflectance(self, irradiance_list=None, force_recompute=True) -> None:
+    def compute_reflectance(
+        self,
+        irradiance: Optional[List[float]] = None,
+        force_recompute: bool = True,
+        use_darkpixels: bool = True,
+    ) -> None:
         """
         Compute Image reflectance from irradiance list, but don't return.
 
         Parameters
         ----------
-        irradiance_list: List
+        irradiance: List[float] or None
             A list returned from Capture.dls_irradiance() or Capture.panel_irradiance()
-        force_recompute: boolean
+
+        force_recompute: bool
             Specifies whether reflectance is to be recomputed.
+
+        use_darkpixels : bool
+            Whether to use the `dark_pixels` (True) or `black_level` (False).
+            Note:
+            `black_level` has a temporally constant value of 4800 across all bands.
+            This is unrealistic as the dark current increases with sensor temperature.
+            `dark_pixels` the averaged DN of the optically covered pixel values. This
+            value is different for each band and varies across an acquisition, presu-
+            mably from increases in temperature.
 
         Returns
         -------
         None
         """
-        if irradiance_list is not None:
+        if irradiance is not None:
             [
-                img.reflectance(irradiance_list[i], force_recompute=force_recompute)
+                img.reflectance(
+                    irradiance=irradiance[i],
+                    force_recompute=force_recompute,
+                    use_darkpixels=use_darkpixels,
+                )
                 for i, img in enumerate(self.images)
             ]
         else:
-            [img.reflectance(force_recompute=force_recompute) for img in self.images]
+            [
+                img.reflectance(
+                    irradiance=None,
+                    force_recompute=force_recompute,
+                    use_darkpixels=use_darkpixels,
+                )
+                for img in self.images
+            ]
 
     def compute_undistorted_reflectance(
-        self, irradiance_list=None, force_recompute=True
+        self,
+        irradiance: Optional[List[float]] = None,
+        force_recompute: bool = True,
+        use_darkpixels: bool = True,
     ) -> None:
         """
         Compute undistorted image reflectance from irradiance list.
 
         Parameters
         ----------
-        irradiance_list: List
+        irradiance: List[float] or None
             A list of returned from Capture.dls_irradiance() or Capture.panel_irradiance()
             TODO: improve this docstring
-        force_recompute: boolean
+
+        force_recompute: bool
            Specifies whether reflectance is to be recomputed.
+
+        use_darkpixels : bool
+            Whether to use the `dark_pixels` (True) or `black_level` (False).
+            Note:
+            `black_level` has a temporally constant value of 4800 across all bands.
+            This is unrealistic as the dark current increases with sensor temperature.
+            `dark_pixels` the averaged DN of the optically covered pixel values. This
+            value is different for each band and varies across an acquisition, presu-
+            mably from increases in temperature.
 
         Returns
         -------
         None
         """
-        if irradiance_list is not None:
+        if irradiance is not None:
             [
                 img.undistorted_reflectance(
-                    irradiance_list[i], force_recompute=force_recompute
+                    irradiance=irradiance[i],
+                    force_recompute=force_recompute,
+                    use_darkpixels=use_darkpixels,
                 )
                 for i, img in enumerate(self.images)
             ]
         else:
             [
-                img.undistorted_reflectance(force_recompute=force_recompute)
+                img.undistorted_reflectance(
+                    irradiance=None,
+                    force_recompute=force_recompute,
+                    use_darkpixels=use_darkpixels,
+                )
                 for img in self.images
             ]
 
@@ -481,46 +535,79 @@ class Capture(object):
         """
         return [index for index, img in enumerate(self.images) if img.band_name == "LWIR"]
 
-    def reflectance(self, irradiance_list: List[float]) -> List[np.ndarray]:
+    def reflectance(
+        self, irradiance: List[float], use_darkpixels: bool = True
+    ) -> List[np.ndarray]:
         """
         Compute reflectance Images.
 
         Parameters
         ----------
-        irradiance_list: List
+        irradiance : List[float] or None
            A list returned from Capture.dls_irradiance() or Capture.panel_irradiance()
            TODO: improve this docstring
+
+        use_darkpixels : bool
+            Whether to use the `dark_pixels` (True) or `black_level` (False).
+            Note:
+            `black_level` has a temporally constant value of 4800 across all bands.
+            This is unrealistic as the dark current increases with sensor temperature.
+            `dark_pixels` the averaged DN of the optically covered pixel values. This
+            value is different for each band and varies across an acquisition, presu-
+            mably from increases in temperature.
+
         Returns
         -------
         List of reflectance EO and long wave infrared Images for given irradiance.
         """
         eo_imgs = [
-            img.reflectance(irradiance_list[i]) for i, img in enumerate(self.eo_images())
+            img.reflectance(irradiance=irradiance[i], use_darkpixels=use_darkpixels)
+            for i, img in enumerate(self.eo_images())
         ]
-        lw_imgs = [img.reflectance() for i, img in enumerate(self.lw_images())]
-        return eo_imgs + lw_imgs
+        lw_imgs = [  # Note that `lw_imgs` are radiance images
+            img.reflectance(use_darkpixels=use_darkpixels)
+            for i, img in enumerate(self.lw_images())
+        ]
 
-    def undistorted_reflectance(self, irradiance_list: List[float]) -> List[np.ndarray]:
+        return eo_imgs + lw_imgs  # append `lw_imgs` to `eo_imgs`
+
+    def undistorted_reflectance(
+        self, irradiance: List[float], use_darkpixels: bool = True
+    ) -> List[np.ndarray]:
         """
         Compute undistorted reflectance Images.
 
         Parameters
         ----------
-        irradiance_list: List
+        irradiance: List[float]
             A list returned from Capture.dls_irradiance() or Capture.panel_irradiance()
             TODO: improve this docstring
+
+        use_darkpixels : bool
+            Whether to use the `dark_pixels` (True) or `black_level` (False).
+            Note:
+            `black_level` has a temporally constant value of 4800 across all bands.
+            This is unrealistic as the dark current increases with sensor temperature.
+            `dark_pixels` the averaged DN of the optically covered pixel values. This
+            value is different for each band and varies across an acquisition, presu-
+            mably from increases in temperature.
+
         Returns
         -------
         List of undistorted reflectance images for given irradiance.
         """
         eo_imgs = [
-            img.undistorted(img.reflectance(irradiance_list[i]))
+            img.undistorted(
+                img.reflectance(irradiance=irradiance[i], use_darkpixels=use_darkpixels)
+            )
             for i, img in enumerate(self.eo_images())
         ]
-        lw_imgs = [
-            img.undistorted(img.reflectance()) for i, img in enumerate(self.lw_images())
+
+        lw_imgs = [  # Note that `lw_imgs` are radiance images
+            img.undistorted(img.reflectance(use_darkpixels=use_darkpixels))
+            for i, img in enumerate(self.lw_images())
         ]
-        return eo_imgs + lw_imgs
+        return eo_imgs + lw_imgs  # append `lw_imgs` to `eo_imgs`
 
     def panels_in_all_expected_images(self):
         """

@@ -135,6 +135,7 @@ class Image(object):
         self.band_name = self.meta.band_name()
         self.band_index = self.meta.band_index()
         self.black_level = self.meta.black_level()
+        self.dark_pixels = self.meta.dark_pixels()
         if self.meta.supports_radiometric_calibration():
             self.radiometric_cal = self.meta.radiometric_cal()
         self.exposure_time = self.meta.exposure()
@@ -338,6 +339,7 @@ class Image(object):
         self,
         irradiance: Optional[float] = None,
         force_recompute: bool = False,
+        use_darkpixels: bool = True,
         return_rrs: bool = False,
     ) -> np.ndarray:
         """
@@ -350,12 +352,24 @@ class Image(object):
             The irradiance used to normalise the radiance image.
             If None then the horizontal irradiance from the DLS2
             will be used.
+
         force_recompute : bool
             Recompute the reflectance image even if already done so.
+
+        use_darkpixels : bool
+            Whether to use the `dark_pixels` (True) or `black_level` (False).
+            Note:
+            `black_level` has a temporally constant value of 4800 across all bands.
+            This is unrealistic as the dark current increases with sensor temperature.
+            `dark_pixels` the averaged DN of the optically covered pixel values. This
+            value is different for each band and varies across an acquisition, presu-
+            mably from increases in temperature.
+
         return_rrs : bool
             if True : returns remote sensing reflectance, Rrs, (units: 1/sr)
             if False: returns Reflectance (units: a.u.)
             This only applies to VIS-NIR bands not LWIR
+
         """
         if (
             self.__reflectance_image is not None
@@ -375,19 +389,41 @@ class Image(object):
         if self.band_name != "LWIR":
             self.__reflectance_irradiance = irradiance
             if return_rrs:
-                self.__reflectance_image = self.radiance() / irradiance
+                self.__reflectance_image = (
+                    self.radiance(use_darkpixels=use_darkpixels) / irradiance
+                )
             else:
-                self.__reflectance_image = self.radiance() * math.pi / irradiance
+                self.__reflectance_image = (
+                    self.radiance(use_darkpixels=use_darkpixels) * math.pi / irradiance
+                )
 
         else:
-            self.__reflectance_image = self.radiance()
+            self.__reflectance_image = self.radiance(use_darkpixels=use_darkpixels)
 
         return self.__reflectance_image
 
-    def intensity(self, force_recompute: bool = False) -> np.ndarray:
-        """Lazy=computes and returns the intensity image after black level,
-        vignette, and row correction applied.
-        Intensity is in units of DN*Seconds without a radiance correction"""
+    def intensity(
+        self, force_recompute: bool = False, use_darkpixels: bool = True
+    ) -> np.ndarray:
+        """
+        Computes and return the intensity image after black level, vignette,
+        and row correction applied. Intensity is in units of DN*Seconds without
+        a radiance correction
+
+        Parameters
+        ----------
+        force_recompute : bool
+            Recompute the reflectance image even if already done so.
+
+        use_darkpixels : bool
+            Whether to use the `dark_pixels` (True) or `black_level` (False).
+            Note:
+            `black_level` has a temporally constant value of 4800 across all bands.
+            This is unrealistic as the dark current increases with sensor temperature.
+            `dark_pixels` the averaged DN of the optically covered pixel values. This
+            value is different for each band and varies across an acquisition, presu-
+            mably from increases in temperature.
+        """
         if self.__intensity_image is not None and force_recompute is False:
             return self.__intensity_image
 
@@ -402,21 +438,43 @@ class Image(object):
         )
 
         # apply image correction methods to raw image
+
         vig, x, y = self.vignette()
         r_cal = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
-        lt_im = vig * r_cal * (image_raw - self.black_level)
+
+        dc = self.dark_pixels if use_darkpixels else self.black_level
+        lt_im = vig * r_cal * (image_raw - dc)
         lt_im[lt_im < 0] = 0
+
         max_raw_dn = float(2**self.bits_per_pixel)
-        intensity_image = lt_im.astype(float) / (
+        intensity_image = lt_im.astype("float64") / (
             self.gain * self.exposure_time * max_raw_dn
         )
 
         self.__intensity_image = intensity_image.T
         return self.__intensity_image
 
-    def radiance(self, force_recompute: bool = False) -> np.ndarray:
-        """Lazy=computes and returns the radiance image after all radiometric
-        corrections have been applied"""
+    def radiance(
+        self, force_recompute: bool = False, use_darkpixels: bool = True
+    ) -> np.ndarray:
+        """
+        Computes and returns the radiance image after all radiometric
+        corrections have been applied
+
+        Parameters
+        ----------
+        force_recompute : bool
+            Recompute the reflectance image even if already done so.
+
+        use_darkpixels : bool
+            Whether to use the `dark_pixels` (True) or `black_level` (False).
+            Note:
+            `black_level` has a temporally constant value of 4800 across all bands.
+            This is unrealistic as the dark current increases with sensor temperature.
+            `dark_pixels` the averaged DN of the optically covered pixel values. This
+            value is different for each band and varies across an acquisition, presu-
+            mably from increases in temperature.
+        """
         if self.__radiance_image is not None and force_recompute is False:
             return self.__radiance_image
 
@@ -433,8 +491,11 @@ class Image(object):
             # apply image correction methods to raw image
             vig, x, y = self.vignette()
             r_cal = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
-            lt_im = vig * r_cal * (image_raw - self.black_level)
+
+            dc = self.dark_pixels if use_darkpixels else self.black_level
+            lt_im = vig * r_cal * (image_raw - dc)
             lt_im[lt_im < 0] = 0
+
             max_raw_dn = float(2**self.bits_per_pixel)
             radiance_image = (
                 lt_im.astype(float) / (self.gain * self.exposure_time) * a1 / max_raw_dn
@@ -480,19 +541,25 @@ class Image(object):
         vignette = 1.0 / np.polyval(v_polynomial, r)
         return vignette, x, y
 
-    def undistorted_radiance(self, force_recompute: bool = False) -> np.ndarray:
-        return self.undistorted(self.radiance(force_recompute))
+    def undistorted_radiance(
+        self, force_recompute: bool = False, use_darkpixels: bool = True
+    ) -> np.ndarray:
+        return self.undistorted(
+            self.radiance(force_recompute=force_recompute, use_darkpixels=use_darkpixels)
+        )
 
     def undistorted_reflectance(
         self,
         irradiance: Optional[float] = None,
         force_recompute: bool = False,
+        use_darkpixels: bool = True,
         return_rrs: bool = False,
     ) -> np.ndarray:
         return self.undistorted(
             self.reflectance(
                 irradiance=irradiance,
                 force_recompute=force_recompute,
+                use_darkpixels=use_darkpixels,
                 return_rrs=return_rrs,
             )
         )

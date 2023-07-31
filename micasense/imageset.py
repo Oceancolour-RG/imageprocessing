@@ -36,9 +36,9 @@ from pprint import pprint
 
 from tqdm import tqdm
 
-import micasense.image as image
-import micasense.capture as capture
-import micasense.imageutils as imageutils
+from .image import Image
+from .capture import Capture
+from .imageutils import aligned_capture, save_capture_as_stack, save_capture_as_rgb
 
 warnings.simplefilter(action="once")
 
@@ -90,7 +90,7 @@ def save_capture(params, cap):
     try:
         # align capture
         if len(cap.images) == params["capture_len"]:
-            im_aligned = imageutils.aligned_capture(
+            im_aligned = aligned_capture(
                 irradiance_list=params["irradiance"],
                 warp_matrices=params["warp_matrices"],
                 img_type=params["img_type"],
@@ -107,7 +107,7 @@ def save_capture(params, cap):
                 params["output_stack_dir"], cap.uuid + ".tif"
             )
             if params["overwrite"] or not os.path.exists(output_stack_file_path):
-                imageutils.save_capture_as_stack(
+                save_capture_as_stack(
                     capture=cap,
                     im_aligned=im_aligned,
                     out_filename=output_stack_file_path,
@@ -117,7 +117,7 @@ def save_capture(params, cap):
                 params["output_rgb_dir"], cap.uuid + ".jpg"
             )
             if params["overwrite"] or not os.path.exists(output_rgb_file_path):
-                imageutils.save_capture_as_rgb(
+                save_capture_as_rgb(
                     im_aligned=im_aligned, out_filename=output_rgb_file_path
                 )
 
@@ -173,11 +173,11 @@ class ImageSet(object):
                 "leave": True,
             }
             for path in tqdm(iterable=matches, desc="Loading ImageSet", **kwargs):
-                images.append(image.Image(image_path=path))
+                images.append(Image(image_path=path))
         else:
             print("Loading ImageSet from: {}".format(directory))
             for i, path in enumerate(matches):
-                images.append(image.Image(image_path=path))
+                images.append(Image(image_path=path))
                 if progress_callback is not None:
                     progress_callback(float(i) / float(len(matches)))
 
@@ -195,7 +195,7 @@ class ImageSet(object):
         captures = []
         for cap_imgs in captures_index:
             imgs = captures_index[cap_imgs]
-            newcap = capture.Capture(imgs)
+            newcap = Capture(imgs)
             captures.append(newcap)
         if progress_callback is not None:
             progress_callback(1.0)

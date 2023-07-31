@@ -636,6 +636,23 @@ class MetadataFromDict(object):
         Note: these pixels are raw, and have not been radiometrically
               corrected. Use the black_level() method for all
               radiomentric calibrations
+
+        *** RG comments ***
+             The black_level() has a value of 4800 for all bands. A time
+             series plot of the `black_level()`  showed that it remained
+             constant (4800) across the acquisition. While `dark_pixels()`
+             varied presumably with sensor temperature. From this analysis
+             it is likely best to use the `dark_pixels()` rather than the
+             (precalibrated?) `dark_pixels()`. The following statement
+             is taken from "MicaSense RedEdge Image Processing Tutorial 1"
+
+             "These [darkPixel] values come from optically-covered pixels
+             on the imager which are exposed at the same time as the image
+             pixels. They measure the small amount of random charge gener-
+             ation in each pixel, independent of incoming light, which is
+             common to all semiconductor imaging devices."
+
+             Hence I recommend the use of `dark_pixels()` over `black_pixels()`
         """
         return self.meta["image_data"][self.im_name]["darkpixels"]
 

@@ -295,16 +295,20 @@ class Panel(object):
         raw_img = self.image.undistorted(self.image.raw())
         return self.region_stats(raw_img, self.panel_corners(), sat_threshold=65000)
 
-    def intensity(self):
-        intensity_img = self.image.undistorted(self.image.intensity())
+    def intensity(self, use_darkpixels: bool = True):
+        intensity_img = self.image.undistorted(
+            self.image.intensity(use_darkpixels=use_darkpixels)
+        )
         return self.region_stats(intensity_img, self.panel_corners(), sat_threshold=65000)
 
-    def radiance(self):
-        radiance_img = self.image.undistorted(self.image.radiance())
+    def radiance(self, use_darkpixels: bool = True):
+        radiance_img = self.image.undistorted(
+            self.image.radiance(use_darkpixels=use_darkpixels)
+        )
         return self.region_stats(radiance_img, self.panel_corners())
 
-    def reflectance_mean(self):
-        reflectance_image = self.image.reflectance()
+    def reflectance_mean(self, use_darkpixels: bool = True):
+        reflectance_image = self.image.reflectance(use_darkpixels=use_darkpixels)
         if reflectance_image is None:
             print(
                 "First calculate the reflectance image by providing a\n"

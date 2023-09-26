@@ -371,6 +371,11 @@ class Image(object):
             This only applies to VIS-NIR bands not LWIR
 
         """
+        # print(
+        #     f"Computing reflectance for {self.band_name} ({self.band_index}),"
+        #     f"{self.center_wavelength}, {self.dark_pixels}, {self.black_level}"
+        # )
+
         if (
             self.__reflectance_image is not None
             and force_recompute is False
@@ -488,18 +493,31 @@ class Image(object):
                 self.radiometric_cal[1],
                 self.radiometric_cal[2],
             )
+            g_ = self.gain
+            te_ = self.exposure_time
+            max_raw_dn = float(2**self.bits_per_pixel)
+
             # apply image correction methods to raw image
             vig, x, y = self.vignette()
-            r_cal = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
-
             dc = self.dark_pixels if use_darkpixels else self.black_level
-            lt_im = vig * r_cal * (image_raw - dc)
-            lt_im[lt_im < 0] = 0
 
-            max_raw_dn = float(2**self.bits_per_pixel)
-            radiance_image = (
-                lt_im.astype(float) / (self.gain * self.exposure_time) * a1 / max_raw_dn
-            )
+            # original code (below - commented out) is hard to follow:
+            # r_cal = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
+            # lt_im = vig * r_cal * (image_raw - dc)
+            # lt_im[lt_im < 0] = 0
+
+            # radiance_image = (
+            #     lt_im.astype(float) / (self.gain * self.exposure_time) * a1 / max_raw_dn
+            # )
+
+            # code following the equation of:
+            # https://support.micasense.com/hc/en-us/articles/
+            #    115000351194-Radiometric-Calibration-Model-for-MicaSense-Sensors
+            normcorr_dn = (image_raw.astype("float64") - float(dc)) / max_raw_dn
+            r_cal = a1 / (g_ * (te_ + (a2 * y) - (a3 * te_ * y)))  # float64
+            radiance_image = vig * r_cal * normcorr_dn
+            radiance_image[radiance_image < 0] = 0
+
         else:
             lt_im = image_raw - (273.15 * 100.0)  # convert to C from K
             radiance_image = lt_im.astype(float) * 0.01

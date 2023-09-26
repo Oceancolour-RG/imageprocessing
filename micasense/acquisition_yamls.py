@@ -639,6 +639,43 @@ def get_bandnum(tif: Path) -> int:
     return int(tif.stem.split("_")[-1])
 
 
+def get_dls2_ed(md_dict: dict) -> Tuple[List[float], List[float], str]:
+    """
+    Return the DLS2 downwelling solar irradiance at the sorted
+    (ascending) wavelengths and the units
+
+    Parameters
+    ----------
+    md_dict : dict
+        Preliminary image-set metadata dictionary
+
+    Returns
+    -------
+    dls2_ed : List[float]
+        The DLS2 downwelling solar irradiance at the sorted (ascending)
+        wavelengths
+    dls2_wvl : List[float]
+        The sorted (ascending) DLS2 wavelengths
+    dls2_units : str
+        The SI units of solar irradiance
+    """
+    id_, isf_ = "image_data", "irradiance_scale_factor"
+    dls2_wvl, dls2_ed = [], []
+    for k in md_dict[id_]:
+        dls2_wvl.append(md_dict[id_][k]["dls_wavelength"])
+        dls2_ed.append(md_dict[id_][k]["dls_Ed_h"] * md_dict[id_][k][isf_])
+    dls2_units = "W/m^2/nm"
+
+    # There probably is a way to do the sorting without using
+    # numpy, but, this is quick and easy to implement
+    dls2_wvl = np.array(dls2_wvl)
+    dls2_ed = np.array(dls2_ed)
+    s_ix = np.argsort(dls2_wvl)
+
+    # DO NOT USE list(nd.adrray) as yaml still thinks its a numpy binary
+    return dls2_ed[s_ix].tolist(), dls2_wvl[s_ix].tolist(), dls2_units
+
+
 def create_img_acqi_yamls(
     dpath: Union[Path, str],
     opath: Optional[Union[Path, str]] = None,
@@ -734,7 +771,9 @@ def create_img_acqi_yamls(
     # 2) Iterate through each "SYNCXXXXSET" folder and extract the
     #    relevant image metadata,  including whether all images in
     #    a set are valid (i.e. not corrupt)
+    print("processing:")
     for d in sync_d:
+        print(f"   SYNC folder: {d}")
         # get a sorted list of all acquisition ids in `d`
         acqi_ids = get_acqui_id(dpath, cam_d, d)
 
@@ -747,10 +786,7 @@ def create_img_acqi_yamls(
         for acq in acqi_ids:
 
             # initiate the output dict
-            md_dict = {
-                "image_data": dict(),
-                "base_path": str(dpath),
-            }
+            md_dict = {"image_data": dict(), "base_path": str(dpath)}
 
             # get a sorted list of tif files for this acquisition
             unsorted_tifs = []
@@ -797,10 +833,23 @@ def create_img_acqi_yamls(
             md_dict["ppk_lon"] = None
             md_dict["ppk_height"] = None
 
+            # Add the DLS2 solar irradiance spectra into the main portion
+            # of the dictionary.
+            if valid:
+                dls2_ed, dls2_wvl, dls2_units = get_dls2_ed(md_dict)
+            else:
+                dls2_ed, dls2_wvl, dls2_units = None, None, "W/m^2/nm"
+
+            md_dict["dls2_ed"] = dls2_ed  # List[float]
+            md_dict["dls2_ed_wvl"] = dls2_wvl  # List[float]
+            md_dict["dls2_ed_units"] = dls2_units  # str
+
             # write to yaml
             yaml_ofile = o_ypath / f"IMG_{acq}.yaml"
             with open(yaml_ofile, "w") as fid:
                 yaml.dump(md_dict, fid, default_flow_style=False)
+
+    return
 
 
 def plot_frate_comp(

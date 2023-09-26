@@ -515,7 +515,7 @@ def band_dict_from_file(
             "dls_altitde": alt,  # float or None
             "dls_utctime": get_utctime(**kw),  # datetime or None
             "dls_solarazi": float_or_zero("Xmp.DLS.SolarAzimuth", **kw),
-            "dls_solarzen": float_or_zero("Xmp.DLS.SolarElevation", **kw),
+            "dls_solarelevation": float_or_zero("Xmp.DLS.SolarElevation", **kw),
             "GPSAltitudeRef": float_or_zero("Exif.GPSInfo.GPSAltitudeRef", **kw),
             "GPSDOP": float_or_zero("Exif.GPSInfo.GPSDOP", **kw),
             "Xmp.Camera.GPSXYAccuracy": float_or_zero("Xmp.Camera.GPSXYAccuracy", **kw),

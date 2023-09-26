@@ -106,7 +106,7 @@ def add_exif(
         "Exif.GPSInfo.GPSLatitudeRef": latref,
         "Exif.GPSInfo.GPSLongitude": lon_fdeg,
         "Exif.GPSInfo.GPSLongitudeRef": lonref,
-        "Exif.Image.DateTime": acq_meta["dls_utctime"].strftime("%y:%m:%d %H:%M:%S"),
+        "Exif.Image.DateTime": acq_meta["dls_utctime"].strftime("%Y:%m:%d %H:%M:%S"),
         "Exif.Photo.SubSecTime": f"{1000*acq_meta['dls_utctime'].microsecond}",
         "Exif.GPSInfo.GPSVersionID": "2 2 0 0",
         "Exif.Image.BitsPerSample": 16,

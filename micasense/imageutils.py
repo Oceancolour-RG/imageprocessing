@@ -54,7 +54,7 @@ EXIF_COMP = {
 }
 
 
-def min_ix(arr: np.ndarray, v: float) -> int:
+def closest_ix(arr: np.ndarray, v: float) -> int:
     return int(abs(arr - v).argmin())
 
 
@@ -154,8 +154,8 @@ def get_ndwi(
 
     """
     wavels = np.array(ms_capture.center_wavelengths())
-    nir_ix = min_ix(wavels, nir_wvl)
-    grn_ix = min_ix(wavels, green_wvl)
+    nir_ix = closest_ix(wavels, nir_wvl)
+    grn_ix = closest_ix(wavels, green_wvl)
 
     ndwi = compute_nonlinear_index(b1=im_aligned[grn_ix], b2=im_aligned[nir_ix])
     ndwi[(im_aligned[nir_ix] == 0) & (im_aligned[grn_ix] == 0)] = nodata
@@ -197,8 +197,8 @@ def get_ndvi(
 
     """
     wavels = np.array(ms_capture.center_wavelengths())
-    nir_ix = min_ix(wavels, nir_wvl)
-    red_ix = min_ix(wavels, red_wvl)
+    nir_ix = closest_ix(wavels, nir_wvl)
+    red_ix = closest_ix(wavels, red_wvl)
 
     ndvi = compute_nonlinear_index(b1=im_aligned[nir_ix], b2=im_aligned[red_ix])
     ndvi[(im_aligned[nir_ix] == 0) & (im_aligned[red_ix] == 0)] = nodata
@@ -911,12 +911,12 @@ def save_capture_as_stack(
     im_aligned: np.ndarray,
     out_filename: Union[str, Path],
     img_type: str = "reflectance",
-    sort_by_wavelength: bool = True,
     photometric: str = "MINISBLACK",
     compression: str = "lzw",
     odtype: str = "uint16",
     yml_fn: Optional[Path] = None,
     other_ds: Optional[dict] = None,
+    other_wvl: Optional[np.ndarray] = None,
 ) -> None:
     filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
     """
@@ -933,9 +933,6 @@ def save_capture_as_stack(
         The stack of aligned (or unaligned) images.
     out_filename : str or Path
         The output geotif filename
-    sort_by_wavelength : bool [Optional]
-        Specifies whether to save the image stack with ordered
-        wavelength (ascending order), default = True
     photometric : str [Optional]
         GDAL argument (see https://gdal.org/drivers/raster/gtiff.html)
     compression : str [Optional]
@@ -963,6 +960,8 @@ def save_capture_as_stack(
                 "offset": 1,  # float
             }
         }
+    other_wvl : np.ndarray
+        user-supplied wavelength (ascending order).
     """
 
     def raise_err(user_parm: str, pname: str, allowable: List[str]) -> None:
@@ -987,10 +986,18 @@ def save_capture_as_stack(
     nrows, ncols, nbands = im_aligned.shape
 
     wavel = ms_capture.center_wavelengths()
-    if sort_by_wavelength:
-        eo_list = list(np.argsort(np.array(wavel)[ms_capture.eo_indices()]))
+    if other_wvl is not None:
+        if not isinstance(other_wvl, (np.ndarray, list, tuple)):
+            raise ValueError("`other_wavel` must be np.ndarray, list, tuple")
+        if len(other_wvl) != len(wavel):
+            raise ValueError(
+                "`other_wvl` must have the same number of wavelengths as bands"
+            )
+        other_wvl = np.array(sorted(other_wvl), dtype="float64")
+
     else:
-        eo_list = ms_capture.eo_indices()
+        other_wvl = np.array(sorted(wavel))
+    eo_list = list(np.argsort(np.array(wavel)[ms_capture.eo_indices()]))
 
     # To conserve memory, the geotiff will be saved as uint16
     meta = {
@@ -1026,8 +1033,11 @@ def save_capture_as_stack(
             # convert bandim from float32 to uint16.
             z_idx = out_bix + 1
             dst.write(np.array(bandim * vis_sfactor, dtype=odtype), indexes=z_idx)
-            dst.set_band_description(z_idx, f"{wavel[in_bix]} (Band{in_bix+1:02d})")
-            vis_wavel += f"{wavel[in_bix]},"
+
+            dst.set_band_description(z_idx, f"B{z_idx}_R({int(other_wvl[out_bix])} nm)")
+            vis_wavel += f"{other_wvl[out_bix]},"
+            eval(f"dst.update_tags(B{z_idx}_scale={vis_sfactor})")
+            eval(f"dst.update_tags(B{z_idx}_offset=0)")
 
         # iterate through the thermal bands
         for out_bix, in_bix in enumerate(ms_capture.lw_indices()):
@@ -1053,9 +1063,9 @@ def save_capture_as_stack(
                 scaled_d[scaled_d > vis_sfactor] = vis_sfactor
 
                 dst.write(scaled_d.astype(odtype), indexes=z_idx)
-                dst.set_band_description(z_idx, other_ds[k]["info"])
-                eval(f"dst.update_tags(B{z_idx}_scale_{k}=scale)")
-                eval(f"dst.update_tags(B{z_idx}_offset_{k}=offset)")
+                dst.set_band_description(z_idx, f"B{z_idx}_{other_ds[k]['info']}")
+                eval(f"dst.update_tags(B{z_idx}_scale=scale)")
+                eval(f"dst.update_tags(B{z_idx}_offset=offset)")
 
         # NOTE: The following tags are written into the EXIF/XMP "GDAL Metadata"
         #       metadata tag. Annoyingly, these tags are not accessible with
@@ -1100,7 +1110,6 @@ def save_aligned_individual(
     ms_capture: Capture,
     im_aligned: np.ndarray,
     out_basename: str,
-    sort_by_wavelength: bool = True,
     photometric: str = "MINISBLACK",
     compression: str = "lzw",
     odtype: str = "uint16",
@@ -1123,9 +1132,6 @@ def save_aligned_individual(
         The stack of aligned (or unaligned) images.
     out_basename : str
         The output geotif basename, e.g. /path/to/output/IMG_ALIGNED_0251
-    sort_by_wavelength : bool [Optional]
-        Specifies whether to save the image stack with ordered
-        wavelength (ascending order), default = True
     photometric : str [Optional]
         GDAL argument (see https://gdal.org/drivers/raster/gtiff.html)
     compression : str [Optional]

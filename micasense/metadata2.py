@@ -775,7 +775,7 @@ class MetadataFromDict(object):
 
     def solar_elevation(self) -> float:
         """solar elevation at the time of capture, as calculated by the camera system"""
-        return self.meta["dls_solarzen"]
+        return self.meta["dls_solarelevation"]
 
     def estimated_direct_vector(self) -> Union[List[float], None]:
         """estimated direct light vector relative to the DLS2 reference frame"""

@@ -717,8 +717,6 @@ def aligned_capture(
         use_darkpixels=use_darkpixels,
     )
 
-    exit()
-
     return im_aligned
 
 

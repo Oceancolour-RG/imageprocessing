@@ -546,12 +546,48 @@ def warp_matrices_wrapper(
 def aligned_capture_backend(
     ms_capture: Capture,
     warp_matrices: List[np.ndarray],
+    valid_ix: List[int],
     warp_mode: int = cv2.MOTION_HOMOGRAPHY,
-    valid_ix: Optional[List[int]] = None,
     img_type: str = "reflectance",
     interpolation_mode: int = cv2.INTER_LANCZOS4,
     crop_edges: bool = True,
+    irradiance: Optional[List[float]] = None,
+    use_darkpixels: bool = True,
 ) -> np.ndarray:
+    """
+
+    Parameters
+    ----------
+    ms_capture : Capture
+        Capture object (a set of micasense.image.Images) taken by a single or
+        a pair (e.g. dual camera) of Micasense camera(s), which share the same
+        unique identifier (capture id).
+    warp_matrices : List[np.ndarray]
+        List of warp matrices derived from Capture.get_warp_matrices()
+    valid_ix : List[int]
+        .
+    warp_mode : int
+        Also known as warp_mode. MOTION_HOMOGRAPHY or MOTION_AFFINE.
+        For Altum images only use HOMOGRAPHY.
+    img_type : str
+        'radiance' or 'reflectance' depending on image metadata.
+    interpolation_mode : int
+        Interpolation mode used in the alignment
+    crop_edges : bool
+        Whether to crop the edges of the image that have no overlapping
+        regions between bands
+    irradiance : List[float] or None
+        Irradiance spectrum (band-ordered not wavelength-ordered) or None
+    use_darkpixels : bool
+        Whether to use the `dark_pixels` (True) or `black_level` (False).
+        Note:
+        `black_level` has a temporally constant value of 4800 across all bands.
+        This is unrealistic as the dark current increases with sensor temperature.
+        `dark_pixels` the averaged DN of the optically covered pixel values. This
+        value is different for each band and varies across an acquisition, presu-
+        mably from increases in temperature.
+
+    """
     width, height = ms_capture.images[0].size()
 
     im_aligned = np.zeros((height, width, len(warp_matrices)), dtype="float32")
@@ -561,9 +597,20 @@ def aligned_capture_backend(
         # the undistored radiance or reflectance has been calculated in
         # `aligned_capture()`, thus enforce force_recompute=False
         if img_type == "reflectance":
-            img = ms_capture.images[i].undistorted_reflectance(force_recompute=False)
-        else:
-            img = ms_capture.images[i].undistorted_radiance(force_recompute=False)
+
+            if irradiance is None:
+                ed = ms_capture.images[i].horizontal_irradiance
+            else:
+                ed = irradiance[i]
+
+            img = ms_capture.images[i].undistorted_reflectance(
+                irradiance=ed, use_darkpixels=use_darkpixels, force_recompute=True
+            )
+
+        else:  # radiance
+            img = ms_capture.images[i].undistorted_radiance(
+                use_darkpixels=use_darkpixels, force_recompute=True
+            )
 
         if warp_mode != cv2.MOTION_HOMOGRAPHY:
             im_aligned[:, :, i] = cv2.warpAffine(
@@ -611,7 +658,9 @@ def aligned_capture(
     Parameters
     ----------
     ms_capture : Capture
-        .
+        Capture object (a set of micasense.image.Images) taken by a single or
+        a pair (e.g. dual camera) of Micasense camera(s), which share the same
+        unique identifier (capture id).
     warp_matrices : List[np.ndarray]
         List of warp matrices derived from Capture.get_warp_matrices()
     img_type : str
@@ -620,7 +669,8 @@ def aligned_capture(
         Also known as warp_mode. MOTION_HOMOGRAPHY or MOTION_AFFINE.
         For Altum images only use HOMOGRAPHY.
     crop_edges : bool
-        .
+        Whether to crop the edges of the image that have no overlapping
+        regions between bands
     irradiance : List[float] or None
         Irradiance spectrum (band-ordered not wavelength-ordered) or None
     use_darkpixels : bool
@@ -637,24 +687,15 @@ def aligned_capture(
     -------
     np.ndarray with alignment changes
     """
-    if not img_type and irradiance is None:
-        img_type = "radiance" if ms_capture.dls_irradiance() is None else "reflectance"
-
-    # compute the radiance or reflectance
-    if img_type == "radiance":
-        ms_capture.compute_undistorted_radiance(
-            use_darkpixels=use_darkpixels, force_recompute=True
-        )  # radiance is stored in ms_capture.image.__radiance_image
-
-    elif img_type == "reflectance":
+    if not img_type:
         if irradiance is None:
-            # why is [0] appended to the dls irradiance??
-            irradiance = ms_capture.dls_irradiance() + [0]
+            img_type = (
+                "radiance" if ms_capture.dls_irradiance() is None else "reflectance"
+            )
+        else:
+            img_type = "reflectance"
 
-        ms_capture.compute_undistorted_reflectance(
-            irradiance=irradiance, use_darkpixels=use_darkpixels, force_recompute=True
-        )  # reflectance is stored in ms_capture.image.__reflectance_image
-    else:
+    if img_type not in ["radiance", "reflectance"]:
         raise ValueError("`img_type` must either be 'radiance', 'reflectance' or None")
 
     if warp_matrices is None:
@@ -672,7 +713,11 @@ def aligned_capture(
         img_type=img_type,
         interpolation_mode=cv2.INTER_LANCZOS4,
         crop_edges=crop_edges,
+        irradiance=irradiance,
+        use_darkpixels=use_darkpixels,
     )
+
+    exit()
 
     return im_aligned
 

@@ -403,7 +403,7 @@ class Image(object):
                 # Apply the user-specified irradiance value
                 self.__reflectance_irradiance = irradiance
 
-            print(f"irradiance at {self.center_wavelength}: {irradiance}")
+            # print(f"irradiance at {self.center_wavelength}: {irradiance}")
             # compute the Reflectance or Remote sensing reflectance
             if return_rrs:
                 self.__reflectance_image = (

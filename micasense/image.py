@@ -375,24 +375,36 @@ class Image(object):
         #     f"Computing reflectance for {self.band_name} ({self.band_index}),"
         #     f"{self.center_wavelength}, {self.dark_pixels}, {self.black_level}"
         # )
-
         if (
             self.__reflectance_image is not None
             and force_recompute is False
             and (self.__reflectance_irradiance == irradiance or irradiance is None)
         ):
+            # DO NOT recompute if:
+            # 1) ``self.__reflectance_image`` exists, and
+            # 2) ``force_recompute`` is False, and
+            # 3) ``self.__reflectance_irradiance`` equals user specified ``irradiance``
+            #    input irradiance is None... This last condition is confusing
             return self.__reflectance_image
 
-        if irradiance is None and self.band_name != "LWIR":
-            if self.horizontal_irradiance != 0.0:
-                irradiance = self.horizontal_irradiance
-            else:
-                raise RuntimeError(
-                    "Provide a band-specific spectral irradiance to compute reflectance"
-                )
-
         if self.band_name != "LWIR":
-            self.__reflectance_irradiance = irradiance
+            if irradiance is None:
+                # User has not provided an irradiance value - get the
+                # DLS2 irradiance value (if it exists)
+                if self.horizontal_irradiance != 0.0:
+                    irradiance = self.horizontal_irradiance
+                    # self.__reflectance_irradiance remains None - is this for a reason?
+                else:
+                    raise ValueError(
+                        "horizontal irradiance value is 0.0 - please provide "
+                        "a band-specific spectral irradiance to compute reflectance"
+                    )
+            else:
+                # Apply the user-specified irradiance value
+                self.__reflectance_irradiance = irradiance
+
+            print(f"irradiance at {self.center_wavelength}: {irradiance}")
+            # compute the Reflectance or Remote sensing reflectance
             if return_rrs:
                 self.__reflectance_image = (
                     self.radiance(use_darkpixels=use_darkpixels) / irradiance
@@ -401,8 +413,8 @@ class Image(object):
                 self.__reflectance_image = (
                     self.radiance(use_darkpixels=use_darkpixels) * math.pi / irradiance
                 )
-
         else:
+            # Return the LongWave IR radiance image as-is
             self.__reflectance_image = self.radiance(use_darkpixels=use_darkpixels)
 
         return self.__reflectance_image

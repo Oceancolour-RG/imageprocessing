@@ -8,24 +8,54 @@ from typing import Tuple, Optional
 from .utils import get_ave_focallen, get_ave_pc
 
 
-def ddeg_to_fraction(ddeg: float, islat: bool) -> Tuple[str, Tuple[Fraction]]:
+def ddeg_to_fraction(
+    ddeg: float, islat: bool, precision: int = 8
+) -> Tuple[str, Tuple[Fraction]]:
+    """
+    Convert decimal degrees to a List[Fraction]
+
+    Parameters
+    ----------
+    ddeg : float
+        decimal degree (latitude or longitude)
+    islat : bool
+        Whether `ddeg` is latitude (True) or longitude (False)
+    precision : int
+        The precision of the seconds (from degree, minutes, seconds).
+        Max. precision is 8
+
+    Returns
+    -------
+    ref : str
+        "N" or "S" for latitude
+        "E" or "W" for longitude
+    frac_d : List[Fraction]:
+        Rational representation of the decimal degrees
+    """
 
     if islat:
         ref = "S" if ddeg < 0 else "N"
-        dn = [10000000, 100000000, 100000000]
     else:
         ref = "W" if ddeg < 0 else "E"
-        dn = [1000000, 10000000, 10000000]
 
     base = abs(ddeg) - abs(int(ddeg))
-    deg = [abs(int(ddeg)), int(60.0 * base)]  # degree, minutes
-    deg.append(60.0 * (60.0 * base - deg[1]))  # seconds
+    dd = abs(int(ddeg))
+    mm = int(60.0 * base)
+    ss = 60.0 * (60.0 * base - mm)
 
-    frac_deg = [
-        Fraction(int(deg[i] * dn[i]), dn[i], _normalize=False) for i in range(len(dn))
+    # apply the necessary precision on the seconds
+    denom_ss = 10**precision
+    numer_ss = int(ss * denom_ss)
+
+    # see https://exiv2.org/tags.html for documentation:
+    # "When degrees, minutes and seconds are expressed, the format is dd/1,mm/1,ss/1"
+    frac_d = [
+        Fraction(numerator=dd, denominator=1),  # add degress as dd/1
+        Fraction(numerator=mm, denominator=1),  # add minutes as mm/1
+        Fraction(numerator=numer_ss, denominator=denom_ss),  # add seconds
     ]
 
-    return ref, frac_deg
+    return ref, frac_d
 
 
 def add_exif(

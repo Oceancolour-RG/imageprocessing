@@ -523,10 +523,11 @@ def warp_matrices_wrapper(
     max_align_iter: int,
     warp_mode: int,
     pyramid_levels: int,
+    base_path: Optional[Path] = None,
 ) -> List[np.ndarray]:
     """wrapper to create/save or load the warp matrices"""
     if not warp_npy_file.exists():
-        wrp_capture = Capture.from_yaml(uav_yaml_file)
+        wrp_capture = Capture.from_yaml(yaml_file=uav_yaml_file, base_path=base_path)
         warp_matrices, _ = refine_alignment_warp(
             ms_capture=wrp_capture,
             ref_index=match_index,
@@ -549,7 +550,7 @@ def aligned_capture_backend(
     valid_ix: List[int],
     warp_mode: int = cv2.MOTION_HOMOGRAPHY,
     img_type: str = "reflectance",
-    interpolation_mode: int = cv2.INTER_LANCZOS4,
+    interpolation_mode: int = cv2.INTER_CUBIC,
     crop_edges: bool = True,
     irradiance: Optional[List[float]] = None,
     use_darkpixels: bool = True,
@@ -647,6 +648,7 @@ def aligned_capture(
     warp_matrices: Optional[Union[List[float], List[np.ndarray]]] = None,
     img_type: Optional[str] = None,
     warp_mode: int = cv2.MOTION_HOMOGRAPHY,
+    interpolation_mode: int = cv2.INTER_CUBIC,
     crop_edges: bool = True,
     irradiance: Optional[List[float]] = None,
     use_darkpixels: bool = True,
@@ -668,11 +670,14 @@ def aligned_capture(
     warp_mode : int
         Also known as warp_mode. MOTION_HOMOGRAPHY or MOTION_AFFINE.
         For Altum images only use HOMOGRAPHY.
+    interpolation_mode : int
+        interpolation algorithm used in the homography perspective warping
     crop_edges : bool
         Whether to crop the edges of the image that have no overlapping
         regions between bands
     irradiance : List[float] or None
         Irradiance spectrum (band-ordered not wavelength-ordered) or None
+
     use_darkpixels : bool
         Whether to use the `dark_pixels` (True) or `black_level` (False).
         Note:
@@ -711,7 +716,7 @@ def aligned_capture(
         warp_mode=warp_mode,
         valid_ix=valid_ix,
         img_type=img_type,
-        interpolation_mode=cv2.INTER_LANCZOS4,
+        interpolation_mode=interpolation_mode,
         crop_edges=crop_edges,
         irradiance=irradiance,
         use_darkpixels=use_darkpixels,
@@ -959,6 +964,7 @@ def save_capture_as_stack(
     odtype: str = "uint16",
     yml_fn: Optional[Path] = None,
     other_ds: Optional[dict] = None,
+    other_tags: Optional[dict] = None,
     other_wvl: Optional[np.ndarray] = None,
 ) -> None:
     filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -1002,6 +1008,13 @@ def save_capture_as_stack(
                 "scale": 728.1555555555556,  # float
                 "offset": 1,  # float
             }
+        }
+    other_tags : Dict [Optional]
+        A dictionary of additional tags to add to the output geotiff,
+        e.g.
+        other_tags = {
+            "ed_spectra": "1.462,1.673,1.579", etc,
+            "ed_sensor": "dalec"
         }
     other_wvl : np.ndarray
         user-supplied wavelength (ascending order).
@@ -1124,6 +1137,7 @@ def save_capture_as_stack(
                 vis_wavel = vis_wavel[0:-1]
             dst.update_tags(vis_wavel=vis_wavel)
 
+        # TODO: FIXME: thermal_sfactor and offset exist regardless
         if thermal_sfactor:
             dst.update_tags(thermal_sfactor=thermal_sfactor)
         if thermal_offset:

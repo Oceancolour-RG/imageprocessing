@@ -1,172 +1,16 @@
 #!/usr/bin/env python3
 
-import sys  # noqa
 import pytz
 import yaml
 import pyexiv2
-import numpy as np
-import matplotlib.pyplot as plt
 
 from pathlib import Path
 from packaging import version
+from numpy import array, argsort
 from typing import List, Tuple, Union, Optional
-from datetime import datetime, timedelta, timezone
-from scipy.signal import correlate, correlation_lags
+from datetime import datetime, timedelta
 
 from pprint import pprint  # noqa
-
-import micasense.load_yaml as ms_yaml
-
-
-def add_ppk_to_yaml(
-    yml_f: Union[Path, str],
-    ppk_lat: Union[float, None],
-    ppk_lon: Union[float, None],
-    ppk_height: Union[float, None],
-) -> None:
-    """add ppk lat/lon/height to yaml document"""
-    acq_dict = ms_yaml.load_all(yaml_file=yml_f)
-
-    acq_dict["ppk_lat"] = ppk_lat
-    acq_dict["ppk_lon"] = ppk_lon
-    acq_dict["ppk_height"] = ppk_height
-
-    with open(yml_f, "w") as fid:
-        yaml.dump(acq_dict, fid, default_flow_style=False)
-
-
-def datetime_from_event_text(date: str, time: str, leap_sec: float) -> datetime:
-    """
-    Get a datetime object from a row of an *_events.pos file
-
-    Parameters
-    ----------
-    date : str
-        YYYY/MM/DD e.g. "2021/11/26"
-    time : str
-        HH:MM:SS.SSS e.g. "02:12:51.4"
-    leap_sec : float
-        The current leap second used to convert GPS time to UTC time
-
-    Returns
-    -------
-    dt : datetime
-        datetime object associated with the date and time
-    """
-
-    year, month, day = [int(x) for x in date.split("/")]
-    hour, minute = [int(x) for x in time.split(":")[0:2]]
-    dec_sec = float(time.split(":")[-1])
-    microsec = 1e6 * (dec_sec - int(dec_sec))
-
-    return datetime(
-        year=year,
-        month=month,
-        day=day,
-        hour=hour,
-        minute=minute,
-        second=int(dec_sec),
-        microsecond=int(microsec),
-        tzinfo=timezone.utc,
-    ) - timedelta(seconds=leap_sec)
-
-
-def get_obs_start_end_events(
-    fname: Union[Path, str], leap_sec: float
-) -> Tuple[datetime, datetime]:
-    """
-    Get the observation start and end UTC time from the
-    header of the *_events.pos file without having to
-    read a potentially large file
-
-    Parameters
-    ----------
-    fname : Path or str
-        filename of *_events.pos
-    leap_sec : float
-        The current leap second used to convert GPS time to UTC time
-
-    Returns
-    -------
-    obs_start : datetime
-        observation start datetime object
-    obs_end : datetime
-        observation end datetime object
-    """
-
-    with open(fname, "r", encoding="utf-8") as fid:
-        for i, row in enumerate(fid):
-            if not row.startswith("%"):
-                break
-
-            if "% obs start" in row:
-                date, time = row.strip().split()[4:6]
-                obs_start = datetime_from_event_text(date, time, leap_sec)
-
-            if "% obs end" in row:
-                date, time = row.strip().split()[4:6]
-                obs_end = datetime_from_event_text(date, time, leap_sec)
-
-    return obs_start, obs_end
-
-
-def open_events(
-    fname: Union[Path, str], leap_sec: float, get_frame_rate: bool = False
-) -> Tuple[
-    List[float], List[float], List[float], List[datetime], Union[List[float], None]
-]:
-    """
-    Parameters
-    ----------
-    fname : Path or str
-        filename of *_events.pos file
-    leap_sec : float
-        The current leap second used to convert GPS time to UTC time
-    get_frame_rate : bool [default=False]
-        Whether to return the frame rate of sequential trigger events
-
-    Returns
-    -------
-    lat : List[float]
-        Latitudes (decimal degrees) of trigger events recorded by Reach M2
-    lon : List[float]
-        Longitudes (decimal degrees) of trigger events recorded by Reach M2
-    height : List[float]
-        Ellipsoid heights of trigger events recorded by Reach M2
-    dt_ls : List[datetime]
-        datetime (UTC) of trigger events recorded by Reach M2
-    reach_frate : List[float] or None
-        if get_frame_rate is True:
-            reach_frate -> frame rate (seconds) of trigger events recorded
-                           by Reach M2
-        if get_frame_rate is False:
-            reach_frate = None
-    """
-    with open(fname, encoding="utf-8") as fid:
-        contents = fid.readlines()
-
-    lat, lon, height, dt_ls = [], [], [], []
-    reach_frate = [] if get_frame_rate else None
-
-    cnt = 0
-    for i in range(len(contents)):
-        if contents[i].startswith("%"):
-            continue
-
-        row = contents[i].strip().split()
-        dt = datetime_from_event_text(row[0], row[1], leap_sec)
-        if cnt > 0:
-            reach_frate.append((dt - prev_dt).total_seconds())  # noqa
-
-        lat.append(float(row[2]))
-        lon.append(float(row[3]))
-        height.append(float(row[4]))
-        dt_ls.append(dt)
-
-        prev_dt = dt  # noqa
-        cnt += 1
-
-    return lat, lon, height, dt_ls, reach_frate
 
 
 def assert_num_acqui(red_path: Path, blue_path: Path) -> Tuple[int, List[str]]:
@@ -668,9 +512,9 @@ def get_dls2_ed(md_dict: dict) -> Tuple[List[float], List[float], str]:
 
     # There probably is a way to do the sorting without using
     # numpy, but, this is quick and easy to implement
-    dls2_wvl = np.array(dls2_wvl)
-    dls2_ed = np.array(dls2_ed)
-    s_ix = np.argsort(dls2_wvl)
+    dls2_wvl = array(dls2_wvl, order="C")
+    dls2_ed = array(dls2_ed, order="C")
+    s_ix = argsort(dls2_wvl)
 
     # DO NOT USE list(nd.adrray) as yaml still thinks its a numpy binary
     return dls2_ed[s_ix].tolist(), dls2_wvl[s_ix].tolist(), dls2_units
@@ -828,10 +672,14 @@ def create_img_acqi_yamls(
             add2dict(md_dict, "bits_persample", list(set(bps_ls)))
             add2dict(md_dict, "focalplane_xres", list(set(fp_xres_ls)))
             add2dict(md_dict, "focalplane_yres", list(set(fp_yres_ls)))
+
             md_dict["valid_set"] = valid
             md_dict["ppk_lat"] = None
             md_dict["ppk_lon"] = None
             md_dict["ppk_height"] = None
+            md_dict["ppk_lat_uncert"] = None
+            md_dict["ppk_lon_uncert"] = None
+            md_dict["ppk_alt_uncert"] = None
 
             # Add the DLS2 solar irradiance spectra into the main portion
             # of the dictionary.
@@ -850,160 +698,3 @@ def create_img_acqi_yamls(
                 yaml.dump(md_dict, fid, default_flow_style=False)
 
     return
-
-
-def plot_frate_comp(
-    reach_frate: np.ndarray,
-    ms_frate: np.ndarray,
-    corr: np.ndarray,
-    lags: np.ndarray,
-    opng: Optional[Union[Path, str]] = None,
-) -> None:
-    start = 0.50
-    stop = 1.50
-    bwidth = 0.02
-
-    bedges = np.arange(start=start, stop=stop + bwidth, step=bwidth)
-    cbins = 0.5 * (bedges[0:-1] + (np.roll(bedges, -1))[0:-1])
-
-    rfreq, _ = np.histogram(reach_frate, bins=bedges, density=True)
-    msfreq, _ = np.histogram(ms_frate, bins=bedges, density=True)
-
-    fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(7, 7))
-    axes[0].plot(cbins, rfreq * np.diff(bedges), "r.-", label="Reach M2 trigger events")
-    axes[0].plot(cbins, msfreq * np.diff(bedges), "k.--", label="Micasense image-sets")
-    axes[0].set_xlabel("frame rate (seconds)")
-    axes[0].set_ylabel("PDF")
-    axes[0].legend(loc=1)
-
-    max_ix = np.argmax(corr)
-    axes[1].plot(lags, corr, "k.")
-    axes[1].plot(lags[max_ix], corr[max_ix], "rs")
-    axes[1].set_ylabel("Correlation")
-    axes[1].set_xlabel("lag indices")
-    axes[1].annotate(
-        "Micasense vs Reach UTC times\n",
-        xy=(0.01, 0.95),
-        xycoords="axes fraction",
-        fontsize=10,
-    )
-    axes[1].annotate(
-        f"Index = {lags[max_ix]}",
-        xy=(lags[max_ix], corr[max_ix]),
-        xycoords="data",
-        fontsize=10,
-        color="r",
-    )
-
-    fig.subplots_adjust(hspace=0.2)
-
-    if opng is not None:
-        fig.savefig(opng, format="png", dpi=300, bbox_inches="tight", pad_inches=0.05)
-
-
-def get_crosscorr(in1: np.ndarray, in2: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    corr = (
-        correlate(in1=in1, in2=in2, mode="full")
-        / ((in1**2).sum() * (in2**2).sum()) ** 0.5
-    )
-
-    lags = correlation_lags(in1_len=in1.size, in2_len=in2.size, mode="full")
-    return corr, lags
-
-
-def append_reach2yaml(
-    yaml_path: Union[Path, str],
-    events_file: Union[Path, str],
-    leap_sec: float = 18,
-) -> None:
-    """
-    Append Reach M2 lat/lon/height into the yamls created by the
-    create_img_acqi_yamls() function.
-
-    Parameters
-    ----------
-    yaml_path : Path or str
-        The directory containing the yaml's for a given flight
-    events_file : Path or str
-        The events.pos file associated with the flight
-    leap_sec : float (default = 18)
-        The leap seconds used to convert the Reach M2 GPS time to UTC.
-        see https://endruntechnologies.com/support/leap-seconds
-        As of 13 Dec. 2016, the current GPS-UTC leap seconds is 18
-
-    Notes
-    -----
-      +++ The number of trigger events in the  *_events.pos file may not
-          match the number tiff's acquired during the flight. The reason
-          for this is unclear at the moment, but may be caused by captu-
-          ring image data as the reach  m2 is turning on or in the proc-
-          ess of acquiring a satellite fix.
-
-          Histograms of the Reach M2 trigger event frame rate and the
-          Micasense frame rate are nearly identical, where a mode exists
-          at 1.0 seconds with ~90% of the frame rates existing between
-          0.90 to 1.10 seconds. A cross-correlation between the frame
-          rates can be then be used so sync the lat/lon/height
-
-          There is no correlation between the Micasense frame rate and
-          the max. exposure time for an acquisition.
-    """
-    print(f"Appending Reach M2 GPS data to yamls in {yaml_path}")
-    obs_start, obs_end = get_obs_start_end_events(events_file, leap_sec=leap_sec)
-    ms_start = ms_yaml.load_all(yaml_file=yaml_path / "IMG_0000.yaml", key="dls_utctime")
-    epoch_time = obs_start if obs_start < ms_start else ms_start
-
-    # load the events_file
-    lat, lon, height, reach_dt, reach_frate = open_events(
-        events_file, leap_sec=leap_sec, get_frame_rate=True
-    )
-    reach_dt_since_epoch = [(dt - epoch_time).total_seconds() for dt in reach_dt]
-
-    tifs = sorted(yaml_path.glob("**/IMG_*.yaml"))
-    n_ms = len(tifs)
-    n_trg = len(lat)
-    n_missing = n_ms - n_trg
-
-    ms_dt = []
-    ms_dt_since_epoch = []
-    nodata_ix = []
-    for i, f in enumerate(tifs):
-        ms_time = ms_yaml.load_all(yaml_file=f, key="dls_utctime")
-        if ms_time is None:
-            nodata_ix.append(i)
-            continue
-
-        ms_dt_since_epoch.append((ms_time - epoch_time).total_seconds())
-        ms_dt.append(ms_time)
-
-    # ---------------------- #
-    #         PLOT           #
-    # ---------------------- #
-    ms_dt_since_epoch = np.array(ms_dt_since_epoch, order="C", dtype=np.float64)
-    reach_dt_since_epoch = np.array(reach_dt_since_epoch, order="C", dtype=np.float64)
-
-    corr, lags = get_crosscorr(in1=ms_dt_since_epoch, in2=reach_dt_since_epoch)
-    start_ix = lags[np.argmax(corr)]
-    print(f"    Number of recorded trigger events in Reach M2: {n_trg}")
-    print(f"    Number of Micasense image sets: {n_ms}")
-    print(f"    Number of missing trigger events in Reach M2: {n_missing}")
-    print(f"    Micasense alignment index from cross-correlation: {start_ix}")
-    print(f"    Number of invalid Micasense image sets: {len(nodata_ix)}")
-
-    ms_frate = [(ms_dt[i] - ms_dt[i - 1]).total_seconds() for i in range(1, len(ms_dt))]
-    ms_frate = np.array(ms_frate, order="C", dtype=np.float64)
-    reach_frate = np.array(reach_frate, order="C", dtype=np.float64)
-
-    opng = yaml_path / f"{yaml_path.parts[-1]}_frame_rate_crosscorr.png"
-    plot_frate_comp(reach_frate, ms_frate, corr, lags, opng)
-
-    # ------------------------- #
-    #  APPEND REACH M2 TO YAML  #
-    # ------------------------- #
-    for i in range(n_trg):
-        f_ix = i + start_ix
-        if i in nodata_ix:
-            continue
-        add_ppk_to_yaml(
-            yml_f=tifs[f_ix], ppk_lat=lat[i], ppk_lon=lon[i], ppk_height=height[i]
-        )

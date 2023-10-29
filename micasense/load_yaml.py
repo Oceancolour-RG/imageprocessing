@@ -20,3 +20,27 @@ def load_all(yaml_file: Union[Path, str], key: Optional[str] = None) -> Union[di
             val = yaml.safe_load(fid)
 
     return val
+
+
+def add_ppk_to_yaml(
+    yml_f: Union[Path, str],
+    ppk_lat: Optional[float] = None,
+    ppk_lon: Optional[float] = None,
+    ppk_height: Optional[float] = None,
+    ppk_lat_uncert: Optional[float] = None,
+    ppk_lon_uncert: Optional[float] = None,
+    ppk_alt_uncert: Optional[float] = None,
+) -> None:
+    """add ppk lat/lon/height to yaml document"""
+    acq_dict = load_all(yaml_file=yml_f)
+
+    acq_dict["ppk_lat"] = ppk_lat
+    acq_dict["ppk_lon"] = ppk_lon
+    acq_dict["ppk_height"] = ppk_height
+    acq_dict["ppk_lat_uncert"] = ppk_lat_uncert
+    acq_dict["ppk_lon_uncert"] = ppk_lon_uncert
+    acq_dict["ppk_alt_uncert"] = ppk_alt_uncert
+
+    with open(yml_f, "w") as fid:
+        yaml.dump(acq_dict, fid, default_flow_style=False)
+    return

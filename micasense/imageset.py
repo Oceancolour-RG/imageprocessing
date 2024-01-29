@@ -27,12 +27,13 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
-import fnmatch
 import os
+import fnmatch
 import warnings
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from functools import partial
 from pprint import pprint
+from functools import partial
+from typing import Optional, Callable, Iterable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from tqdm import tqdm
 
@@ -81,15 +82,20 @@ def parallel_process(
                 progress_callback(float(i) / futures_len)
 
 
-def save_capture(params, cap):
+def save_capture(params: dict, ms_capture: Capture):
     """
     Process an ImageSet according to program parameters. Saves rgb
-    :param params: dict of program parameters from ImageSet.process_imageset()
-    :param cap: micasense.capture.Capture object
+
+    Parameters
+    ----------
+    params : dict
+        program parameters from ImageSet.process_imageset()
+    m_capture: micasense.capture.Capture
+        Capture object
     """
     try:
         # align capture
-        if len(cap.images) == params["capture_len"]:
+        if len(ms_capture.images) == params["capture_len"]:
             im_aligned = aligned_capture(
                 irradiance_list=params["irradiance"],
                 warp_matrices=params["warp_matrices"],
@@ -104,7 +110,7 @@ def save_capture(params, cap):
 
         if params["output_stack_dir"]:
             output_stack_file_path = os.path.join(
-                params["output_stack_dir"], cap.uuid + ".tif"
+                params["output_stack_dir"], ms_capture.uuid + ".tif"
             )
             if params["overwrite"] or not os.path.exists(output_stack_file_path):
                 save_capture_as_stack(
@@ -114,14 +120,14 @@ def save_capture(params, cap):
                 )
         if params["output_rgb_dir"]:
             output_rgb_file_path = os.path.join(
-                params["output_rgb_dir"], cap.uuid + ".jpg"
+                params["output_rgb_dir"], ms_capture.uuid + ".jpg"
             )
             if params["overwrite"] or not os.path.exists(output_rgb_file_path):
                 save_capture_as_rgb(
                     im_aligned=im_aligned, out_filename=output_rgb_file_path
                 )
 
-        cap.clear_image_data()
+        ms_capture.clear_image_data()
     except Exception as e:
         print(e)
         pprint(params)
@@ -131,12 +137,17 @@ def save_capture(params, cap):
 class ImageSet(object):
     """An ImageSet is a container for a group of Captures that are processed together."""
 
-    def __init__(self, captures):
+    def __init__(self, captures: Iterable[Capture]):
         self.captures = captures
         captures.sort()
 
     @classmethod
-    def from_directory(cls, directory, progress_callback=None, use_tqdm=False):
+    def from_directory(
+        cls,
+        directory: str,
+        progress_callback: Optional[Callable] = None,
+        use_tqdm: bool = False,
+    ):
         """
         Create an ImageSet recursively from the files in a directory.
         :param directory: str system file path

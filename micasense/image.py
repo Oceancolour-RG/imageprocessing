@@ -232,6 +232,7 @@ class Image(object):
 
         # Internal image containers; these can use a lot of memory,
         # clear with Image.clear_images
+        self.__vc_g = None  # [float] -> vicarious calibration gains
         self.__raw_image = None  # pure raw pixels
         # black level and gain-exposure/radiometric compensated
         self.__intensity_image = None
@@ -239,7 +240,7 @@ class Image(object):
         self.__reflectance_image = None  # calibrated to reflectance (0-1)
         self.__reflectance_irradiance = None
         self.__undistorted_source = None  # can be any of raw, intensity, radiance
-        # current undistorted image, depdining on source
+        # current undistorted image, depending on source
         self.__undistorted_image = None
 
     # solar elevation is defined as the angle betwee the horizon and the sun,
@@ -330,6 +331,7 @@ class Image(object):
         self.__reflectance_irradiance = None
         self.__undistorted_source = None
         self.__undistorted_image = None
+        self.__vc_g = None
 
     def size(self) -> Tuple[int, int]:
         width, height = self.meta.image_size()
@@ -340,6 +342,7 @@ class Image(object):
         irradiance: Optional[float] = None,
         force_recompute: bool = False,
         use_darkpixels: bool = True,
+        vc_g: float = 1.0,
         return_rrs: bool = False,
     ) -> np.ndarray:
         """
@@ -365,27 +368,37 @@ class Image(object):
             value is different for each band and varies across an acquisition, presu-
             mably from increases in temperature.
 
+        vc_g : float
+            Vicarious calibration gains to apply during radiance computation
+
         return_rrs : bool
             if True : returns remote sensing reflectance, Rrs, (units: 1/sr)
             if False: returns Reflectance (units: a.u.)
             This only applies to VIS-NIR bands not LWIR
 
+        Returns
+        -------
+        reflectance : np.ndarray
+            Reflectance or Rrs image
         """
         # print(
         #     f"Computing reflectance for {self.band_name} ({self.band_index}),"
         #     f"{self.center_wavelength}, {self.dark_pixels}, {self.black_level}"
         # )
-        if (
-            self.__reflectance_image is not None
-            and force_recompute is False
-            and (self.__reflectance_irradiance == irradiance or irradiance is None)
-        ):
-            # DO NOT recompute if:
-            # 1) ``self.__reflectance_image`` exists, and
-            # 2) ``force_recompute`` is False, and
-            # 3) ``self.__reflectance_irradiance`` equals user specified ``irradiance``
-            #    input irradiance is None... This last condition is confusing
-            return self.__reflectance_image
+        if not force_recompute:
+            if (
+                self.__reflectance_image is not None
+                and self.__vc_g == vc_g
+                and (self.__reflectance_irradiance == irradiance or irradiance is None)
+            ):
+                # DO NOT recompute if:
+                # 1) ``self.__reflectance_image`` exists, and
+                # 2) ``self.__vc_g`` equals user-specified ``vc_g``
+                # 3) ``self.__reflectance_irradiance`` equals user specified ``irradiance``
+                #    or the input irradiance is None
+                return self.__reflectance_image
+
+        rad_kw = {"use_darkpixels": use_darkpixels, "vc_g": vc_g}
 
         if self.band_name != "LWIR":
             if irradiance is None:
@@ -406,16 +419,12 @@ class Image(object):
             # print(f"irradiance at {self.center_wavelength}: {irradiance}")
             # compute the Reflectance or Remote sensing reflectance
             if return_rrs:
-                self.__reflectance_image = (
-                    self.radiance(use_darkpixels=use_darkpixels) / irradiance
-                )
+                self.__reflectance_image = self.radiance(**rad_kw) / irradiance
             else:
-                self.__reflectance_image = (
-                    self.radiance(use_darkpixels=use_darkpixels) * math.pi / irradiance
-                )
+                self.__reflectance_image = math.pi * self.radiance(**rad_kw) / irradiance
         else:
             # Return the LongWave IR radiance image as-is
-            self.__reflectance_image = self.radiance(use_darkpixels=use_darkpixels)
+            self.__reflectance_image = self.radiance(**rad_kw)
 
         return self.__reflectance_image
 
@@ -472,7 +481,10 @@ class Image(object):
         return self.__intensity_image
 
     def radiance(
-        self, force_recompute: bool = False, use_darkpixels: bool = True
+        self,
+        force_recompute: bool = False,
+        use_darkpixels: bool = True,
+        vc_g: float = 1.0,
     ) -> np.ndarray:
         """
         Computes and returns the radiance image after all radiometric
@@ -491,12 +503,19 @@ class Image(object):
             `dark_pixels` the averaged DN of the optically covered pixel values. This
             value is different for each band and varies across an acquisition, presu-
             mably from increases in temperature.
+        vc_g : float
+            Vicarious calibration gain to apply [default=1]
         """
-        if self.__radiance_image is not None and force_recompute is False:
-            return self.__radiance_image
+        if force_recompute is False:
+            if (self.__radiance_image is not None) and (self.__vc_g == vc_g):
+                # return precomputed radiance if it exists
+                return self.__radiance_image
 
         # get image dimensions
         image_raw = np.copy(self.raw()).T
+
+        # update the internal vc_g
+        self.__vc_g = vc_g
 
         if self.band_name != "LWIR":
             #  get radiometric calibration factors
@@ -527,12 +546,15 @@ class Image(object):
             #    115000351194-Radiometric-Calibration-Model-for-MicaSense-Sensors
             normcorr_dn = (image_raw.astype("float64") - float(dc)) / max_raw_dn
             r_cal = a1 / (g_ * (te_ + (a2 * y) - (a3 * te_ * y)))  # float64
-            radiance_image = vig * r_cal * normcorr_dn
+
+            radiance_image = vc_g * vig * r_cal * normcorr_dn
             radiance_image[radiance_image < 0] = 0
 
         else:
-            lt_im = image_raw - (273.15 * 100.0)  # convert to C from K
-            radiance_image = lt_im.astype(float) * 0.01
+            # convert to deg.C from K
+            lt_im = vc_g * 0.01 * image_raw.astype("float64") - 273.15
+            radiance_image = lt_im
+
         self.__radiance_image = radiance_image.T
         return self.__radiance_image
 
@@ -572,15 +594,21 @@ class Image(object):
         return vignette, x, y
 
     def undistorted_radiance(
-        self, force_recompute: bool = False, use_darkpixels: bool = True
+        self,
+        force_recompute: bool = False,
+        use_darkpixels: bool = True,
+        vc_g: float = 1.0,
     ) -> np.ndarray:
         return self.undistorted(
-            self.radiance(force_recompute=force_recompute, use_darkpixels=use_darkpixels)
+            self.radiance(
+                force_recompute=force_recompute, use_darkpixels=use_darkpixels, vc_g=vc_g
+            )
         )
 
     def undistorted_reflectance(
         self,
         irradiance: Optional[float] = None,
+        vc_g: float = 1.0,
         force_recompute: bool = False,
         use_darkpixels: bool = True,
         return_rrs: bool = False,
@@ -590,6 +618,7 @@ class Image(object):
                 irradiance=irradiance,
                 force_recompute=force_recompute,
                 use_darkpixels=use_darkpixels,
+                vc_g=vc_g,
                 return_rrs=return_rrs,
             )
         )

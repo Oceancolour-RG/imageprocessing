@@ -671,11 +671,11 @@ def append_reach2yaml(
         )
 
     plot_frate(
-            trg_ts=trigger_ts,
-            mse_ts=mse_ts,
-            trg_ix=trg_ix,
-            mse_ix=mse_ix,
-            opng=yaml_path / f"{yaml_path.parts[-1]}_alignment_plot2.png",
+        trg_ts=trigger_ts,
+        mse_ts=mse_ts,
+        trg_ix=trg_ix,
+        mse_ix=mse_ix,
+        opng=yaml_path / f"{yaml_path.parts[-1]}_alignment_plot2.png",
     )
 
     if debug:

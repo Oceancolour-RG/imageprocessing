@@ -43,7 +43,6 @@ class MetadataFromExif(object):
         self,
         filename: Union[str, Path],
     ):
-
         if not isfile(filename):
             raise IOError("Input path is not a file")
 

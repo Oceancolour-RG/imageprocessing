@@ -330,7 +330,6 @@ def band_dict_from_file(
 
     md = get_md(str(f))
     if md:
-
         md_keys = []
         md_keys.extend(md.exif_keys)
         md_keys.extend(md.iptc_keys)
@@ -628,7 +627,6 @@ def create_img_acqi_yamls(
 
         # 3) iterate through the acquisition id's and extrac metadata
         for acq in acqi_ids:
-
             # initiate the output dict
             md_dict = {"image_data": dict(), "base_path": str(dpath)}
 

@@ -251,9 +251,11 @@ class Capture(object):
                 "{} Band {} {}".format(
                     str(img.band_name),
                     str(img.band_index),
-                    plot_type
-                    if img.band_name.upper() != "LWIR"
-                    else "Brightness Temperature",
+                    (
+                        plot_type
+                        if img.band_name.upper() != "LWIR"
+                        else "Brightness Temperature"
+                    ),
                 )
                 for img in self.images
             ]
@@ -382,45 +384,67 @@ class Capture(object):
             plot_type="Undistorted Radiance",
         )
 
-    def plot_undistorted_reflectance(self, irradiance_list: List[float]) -> None:
+    def plot_undistorted_reflectance(
+        self, irradiance_list: List[float], vcg_list: List[float]
+    ) -> None:
         """
         Compute (if necessary) and plot reflectances given a list
         of irradiances.
 
         Parameters
         ----------
-        irradiance_list: List
-            A list returned from Capture.dls_irradiance() or
-            Capture.panel_irradiance()
+        irradiance_list: List[float]
+            A list of downwelling solar irradiance values either measured by the DLS2 (see
+            Capture.dls_irradiance() or Capture.panel_irradiance()) or an independent
+            irradiance sensor.
+
+        vcg_list : List[float]
+            A list of vicarious calibration gains
         """
         self.__plot(
-            self.undistorted_reflectance(irradiance_list),
+            self.undistorted_reflectance(irradiance=irradiance_list, vc_g=vcg_list),
             plot_type="Undistorted Reflectance",
         )
 
     def compute_radiance(
-        self, force_recompute: bool = True, use_darkpixels: bool = True
+        self,
+        vc_g: Optional[List[float]] = None,
+        force_recompute: bool = True,
+        use_darkpixels: bool = True,
     ) -> None:
         """Compute Image radiances"""
+        vcg_ = [1] * len(self.images) if vc_g is None else vc_g
         [
-            img.radiance(force_recompute=force_recompute, use_darkpixels=use_darkpixels)
-            for img in self.images
+            img.radiance(
+                vc_g=vcg_[i],
+                force_recompute=force_recompute,
+                use_darkpixels=use_darkpixels,
+            )
+            for i, img in enumerate(self.images)
         ]
 
     def compute_undistorted_radiance(
-        self, force_recompute=True, use_darkpixels: bool = True
+        self,
+        vc_g: Optional[List[float]] = None,
+        force_recompute=True,
+        use_darkpixels: bool = True,
     ) -> None:
         """Compute Image undistorted radiance."""
+        vcg_ = [1] * len(self.images) if vc_g is None else vc_g
+
         [
             img.undistorted_radiance(
-                force_recompute=force_recompute, use_darkpixels=use_darkpixels
+                vc_g=vcg_[i],
+                force_recompute=force_recompute,
+                use_darkpixels=use_darkpixels,
             )
-            for img in self.images
+            for i, img in enumerate(self.images)
         ]
 
     def compute_reflectance(
         self,
         irradiance: Optional[List[float]] = None,
+        vc_g: Optional[List[None]] = None,
         force_recompute: bool = True,
         use_darkpixels: bool = True,
     ) -> None:
@@ -430,7 +454,12 @@ class Capture(object):
         Parameters
         ----------
         irradiance: List[float] or None
-            A list returned from Capture.dls_irradiance() or Capture.panel_irradiance()
+            A list of downwelling solar irradiance values either measured by the DLS2 (see
+            Capture.dls_irradiance() or Capture.panel_irradiance()) or an independent
+            irradiance sensor.
+
+        vc_g : List[float] or None
+            A list of vicarious calibration gains
 
         force_recompute: bool
             Specifies whether reflectance is to be recomputed.
@@ -448,28 +477,23 @@ class Capture(object):
         -------
         None
         """
-        if irradiance is not None:
-            [
-                img.reflectance(
-                    irradiance=irradiance[i],
-                    force_recompute=force_recompute,
-                    use_darkpixels=use_darkpixels,
-                )
-                for i, img in enumerate(self.images)
-            ]
-        else:
-            [
-                img.reflectance(
-                    irradiance=None,
-                    force_recompute=force_recompute,
-                    use_darkpixels=use_darkpixels,
-                )
-                for img in self.images
-            ]
+        ed_ = [None] * len(self.images) if irradiance is None else irradiance
+        vcg_ = [1] * len(self.images) if vc_g is None else vc_g
+
+        [
+            img.reflectance(
+                irradiance=ed_[i],
+                vc_g=vcg_[i],
+                force_recompute=force_recompute,
+                use_darkpixels=use_darkpixels,
+            )
+            for i, img in enumerate(self.images)
+        ]
 
     def compute_undistorted_reflectance(
         self,
         irradiance: Optional[List[float]] = None,
+        vc_g: Optional[List[float]] = None,
         force_recompute: bool = True,
         use_darkpixels: bool = True,
     ) -> None:
@@ -479,8 +503,12 @@ class Capture(object):
         Parameters
         ----------
         irradiance: List[float] or None
-            A list of returned from Capture.dls_irradiance() or Capture.panel_irradiance()
-            TODO: improve this docstring
+            A list of downwelling solar irradiance values either measured by the DLS2 (see
+            Capture.dls_irradiance() or Capture.panel_irradiance()) or an independent
+            irradiance sensor.
+
+        vc_g : List[float] or None
+            A list of vicarious calibration gains
 
         force_recompute: bool
            Specifies whether reflectance is to be recomputed.
@@ -498,24 +526,18 @@ class Capture(object):
         -------
         None
         """
-        if irradiance is not None:
-            [
-                img.undistorted_reflectance(
-                    irradiance=irradiance[i],
-                    force_recompute=force_recompute,
-                    use_darkpixels=use_darkpixels,
-                )
-                for i, img in enumerate(self.images)
-            ]
-        else:
-            [
-                img.undistorted_reflectance(
-                    irradiance=None,
-                    force_recompute=force_recompute,
-                    use_darkpixels=use_darkpixels,
-                )
-                for img in self.images
-            ]
+        ed_ = [None] * len(self.images) if irradiance is None else irradiance
+        vcg_ = [1] * len(self.images) if vc_g is None else vc_g
+
+        [
+            img.undistorted_reflectance(
+                irradiance=ed_[i],
+                vc_g=vcg_[i],
+                force_recompute=force_recompute,
+                use_darkpixels=use_darkpixels,
+            )
+            for i, img in enumerate(self.images)
+        ]
 
     def eo_images(self) -> List[np.ndarray]:
         """Returns a list of the EO Images in the Capture."""
@@ -536,16 +558,20 @@ class Capture(object):
         return [index for index, img in enumerate(self.images) if img.band_name == "LWIR"]
 
     def reflectance(
-        self, irradiance: List[float], use_darkpixels: bool = True
+        self, irradiance: List[float], vc_g: List[float], use_darkpixels: bool = True
     ) -> List[np.ndarray]:
         """
         Compute reflectance Images.
 
         Parameters
         ----------
-        irradiance : List[float] or None
-           A list returned from Capture.dls_irradiance() or Capture.panel_irradiance()
-           TODO: improve this docstring
+        irradiance : List[float]
+            A list of downwelling solar irradiance values either measured by the DLS2 (see
+            Capture.dls_irradiance() or Capture.panel_irradiance()) or an independent
+            irradiance sensor.
+
+        vc_g : List[float]
+            A list of vicarious calibration gains
 
         use_darkpixels : bool
             Whether to use the `dark_pixels` (True) or `black_level` (False).
@@ -561,27 +587,33 @@ class Capture(object):
         List of reflectance EO and long wave infrared Images for given irradiance.
         """
         eo_imgs = [
-            img.reflectance(irradiance=irradiance[i], use_darkpixels=use_darkpixels)
+            img.reflectance(
+                irradiance=irradiance[i], vc_g=vc_g[i], use_darkpixels=use_darkpixels
+            )
             for i, img in enumerate(self.eo_images())
         ]
         lw_imgs = [  # Note that `lw_imgs` are radiance images
-            img.reflectance(use_darkpixels=use_darkpixels)
+            img.reflectance(vc_g=vc_g[i], use_darkpixels=use_darkpixels)
             for i, img in enumerate(self.lw_images())
         ]
 
         return eo_imgs + lw_imgs  # append `lw_imgs` to `eo_imgs`
 
     def undistorted_reflectance(
-        self, irradiance: List[float], use_darkpixels: bool = True
+        self, irradiance: List[float], vc_g: List[float], use_darkpixels: bool = True
     ) -> List[np.ndarray]:
         """
         Compute undistorted reflectance Images.
 
         Parameters
         ----------
-        irradiance: List[float]
-            A list returned from Capture.dls_irradiance() or Capture.panel_irradiance()
-            TODO: improve this docstring
+        irradiance: List[float] or None
+            A list of downwelling solar irradiance values either measured by the DLS2 (see
+            Capture.dls_irradiance() or Capture.panel_irradiance()) or an independent
+            irradiance sensor.
+
+        vc_g : List[float] or None
+            A list of vicarious calibration gains
 
         use_darkpixels : bool
             Whether to use the `dark_pixels` (True) or `black_level` (False).
@@ -598,13 +630,15 @@ class Capture(object):
         """
         eo_imgs = [
             img.undistorted(
-                img.reflectance(irradiance=irradiance[i], use_darkpixels=use_darkpixels)
+                img.reflectance(
+                    irradiance=irradiance[i], vc_g=vc_g[i], use_darkpixels=use_darkpixels
+                )
             )
             for i, img in enumerate(self.eo_images())
         ]
 
         lw_imgs = [  # Note that `lw_imgs` are radiance images
-            img.undistorted(img.reflectance(use_darkpixels=use_darkpixels))
+            img.undistorted(img.reflectance(vc_g=vc_g[i], use_darkpixels=use_darkpixels))
             for i, img in enumerate(self.lw_images())
         ]
         return eo_imgs + lw_imgs  # append `lw_imgs` to `eo_imgs`

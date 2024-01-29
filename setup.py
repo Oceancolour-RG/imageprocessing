@@ -38,7 +38,7 @@ setup(
     license="MIT",
     use_scm_version=True,
     setup_requires=["setuptools_scm"],
-    python_requires=">=3.8, <3.12",
+    python_requires=">=3.8, <=3.12",
     # packages=find_packages(),
     packages=find_packages(exclude=("tests", "tests.*")),
     classifiers=[
@@ -46,6 +46,7 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
         "Operating System :: OS Independent",
     ],
     install_requires=[
@@ -53,7 +54,7 @@ setup(
         "requests>=2.28.0",
         "numpy>=1.24.0",
         "opencv-python-headless>=4.7.0.72",
-        "pysolar>=0.10",
+        "pysolar>=0.11",
         "matplotlib>=3.7.0",
         "scikit-image>=0.20.0",
         "packaging>=23.0",

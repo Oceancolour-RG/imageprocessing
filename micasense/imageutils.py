@@ -35,7 +35,7 @@ from warnings import filterwarnings
 from skimage.morphology import disk
 from skimage.util import img_as_ubyte
 from skimage.filters import rank, gaussian
-from typing import Union, List, Tuple, Optional
+from typing import Union, List, Tuple, Optional, Iterable
 
 from micasense.tags import add_exif
 from micasense.capture import Capture
@@ -97,6 +97,45 @@ def gradient(im, ksize=5):
     grad_y = cv2.Sobel(im, cv2.CV_32F, 0, 1, ksize=ksize)
     grad = cv2.addWeighted(np.absolute(grad_x), 0.5, np.absolute(grad_y), 0.5, 0)
     return grad
+
+
+def convert_uint16(minv: float, maxv: float) -> Tuple[float, float]:
+    """
+    Get the scale and offset value to convert floating point
+    data into uint16 (0 to 65355). This linear conversion
+    works such that 0 in the uint16 data is reserved for NODATA.
+    Where NODATA represents those values beyond `minv` and `maxv`
+
+    Parameters
+    ----------
+    minv, maxv : float
+        A user-specified minimum/maximum value used to clip
+        the float data
+
+    Returns
+    -------
+    scale, offset : float
+        The values used to convert uint16 data back to a float via,
+        float_data = (`uint16_data` - `offset`) / `scale`
+
+    """
+
+    odtype = "uint16"
+
+    min_ival = 1  # 0 reserved for NODATA
+    i_range = np.iinfo(np.dtype(odtype)).max - min_ival  # 0 reserved for NODATA
+
+    f_range = maxv - minv
+
+    scale = i_range / f_range
+
+    # solve for offset:
+    #     ui16_d = scale * float_d + offset
+    #   min_ival = scale * minv + offset
+    #     offset = min_ival - scale * minv
+    offset = min_ival - scale * minv
+
+    return scale, offset
 
 
 def compute_nonlinear_index(b1: np.ndarray, b2: np.ndarray) -> np.ndarray:
@@ -212,10 +251,10 @@ def relatives_ref_band(ms_capture: Capture) -> int:
     return 0
 
 
-def translation_from_ref(ms_capture: Capture, band, ref=4) -> None:
+def translation_from_ref(ms_capture: Capture, band: int, ref: int = 4) -> None:
     x, y = ms_capture.images[band].rig_xy_offset_in_px()
     rx, ry = ms_capture.images[ref].rig_xy_offset_in_px()
-    return None
+    return
 
 
 def align(pair: dict) -> dict:
@@ -276,7 +315,6 @@ def align(pair: dict) -> dict:
     warp_matrix[1][2] /= 2**nol
 
     if ref_index != match_index:
-
         show_debug_images = pair["debug"]
         # construct grayscale pyramid
         gray1 = pair["ref_image"]
@@ -329,7 +367,6 @@ def align(pair: dict) -> dict:
             grad2 = gradient(gray2_pyr[level])
 
             if show_debug_images:
-
                 plotwithcolorbar(gray1_pyr[level], "ref level {}".format(level))
                 plotwithcolorbar(gray2_pyr[level], "match level {}".format(level))
                 plotwithcolorbar(grad1, "ref grad level {}".format(level))
@@ -553,6 +590,7 @@ def aligned_capture_backend(
     interpolation_mode: int = cv2.INTER_CUBIC,
     crop_edges: bool = True,
     irradiance: Optional[List[float]] = None,
+    vc_g: Optional[List[float]] = None,
     use_darkpixels: bool = True,
 ) -> np.ndarray:
     """
@@ -579,6 +617,8 @@ def aligned_capture_backend(
         regions between bands
     irradiance : List[float] or None
         Irradiance spectrum (band-ordered not wavelength-ordered) or None
+    vc_g : List[float] or None
+        Vicarious calibration gains (band-ordered not wavelength-ordered) or None
     use_darkpixels : bool
         Whether to use the `dark_pixels` (True) or `black_level` (False).
         Note:
@@ -593,25 +633,22 @@ def aligned_capture_backend(
 
     im_aligned = np.zeros((height, width, len(warp_matrices)), dtype="float32")
 
+    rkw = {"use_darkpixels": use_darkpixels, "force_recompute": True}
     for i in range(0, len(warp_matrices)):
+        rkw.update({"vc_g": 1 if vc_g is None else vc_g[i]})  # vicarious gains
 
-        # the undistored radiance or reflectance has been calculated in
-        # `aligned_capture()`, thus enforce force_recompute=False
+        # recompute undistorted radiance or reflectance, as the user may
+        # provide vicarious-calibration gain factors
         if img_type == "reflectance":
-
             if irradiance is None:
                 ed = ms_capture.images[i].horizontal_irradiance
             else:
                 ed = irradiance[i]
 
-            img = ms_capture.images[i].undistorted_reflectance(
-                irradiance=ed, use_darkpixels=use_darkpixels, force_recompute=True
-            )
+            img = ms_capture.images[i].undistorted_reflectance(irradiance=ed, **rkw)
 
         else:  # radiance
-            img = ms_capture.images[i].undistorted_radiance(
-                use_darkpixels=use_darkpixels, force_recompute=True
-            )
+            img = ms_capture.images[i].undistorted_radiance(**rkw)
 
         if warp_mode != cv2.MOTION_HOMOGRAPHY:
             im_aligned[:, :, i] = cv2.warpAffine(
@@ -645,12 +682,13 @@ def aligned_capture_backend(
 
 def aligned_capture(
     ms_capture: Capture,
+    img_type: str,
     warp_matrices: Optional[Union[List[float], List[np.ndarray]]] = None,
-    img_type: Optional[str] = None,
     warp_mode: int = cv2.MOTION_HOMOGRAPHY,
     interpolation_mode: int = cv2.INTER_CUBIC,
     crop_edges: bool = True,
     irradiance: Optional[List[float]] = None,
+    vc_g: Optional[List[float]] = None,
     use_darkpixels: bool = True,
 ) -> np.ndarray:
     """
@@ -663,10 +701,10 @@ def aligned_capture(
         Capture object (a set of micasense.image.Images) taken by a single or
         a pair (e.g. dual camera) of Micasense camera(s), which share the same
         unique identifier (capture id).
+    img_type : str
+        'radiance' or 'reflectance'
     warp_matrices : List[np.ndarray]
         List of warp matrices derived from Capture.get_warp_matrices()
-    img_type : str
-        'radiance' or 'reflectance' depending on image metadata.
     warp_mode : int
         Also known as warp_mode. MOTION_HOMOGRAPHY or MOTION_AFFINE.
         For Altum images only use HOMOGRAPHY.
@@ -677,7 +715,8 @@ def aligned_capture(
         regions between bands
     irradiance : List[float] or None
         Irradiance spectrum (band-ordered not wavelength-ordered) or None
-
+    vc_g : List[float] or None
+        Vicarious calibration gains (band-ordered not wavelength-ordered) or None
     use_darkpixels : bool
         Whether to use the `dark_pixels` (True) or `black_level` (False).
         Note:
@@ -692,16 +731,14 @@ def aligned_capture(
     -------
     np.ndarray with alignment changes
     """
-    if not img_type:
-        if irradiance is None:
-            img_type = (
-                "radiance" if ms_capture.dls_irradiance() is None else "reflectance"
-            )
-        else:
-            img_type = "reflectance"
-
     if img_type not in ["radiance", "reflectance"]:
-        raise ValueError("`img_type` must either be 'radiance', 'reflectance' or None")
+        raise ValueError("`img_type` must either be 'radiance' or 'reflectance'")
+
+    if (img_type == "reflectance") and (irradiance is None):
+        if ms_capture.dls_irradiance() is None:  # check that DLS2 data is present
+            raise ValueError(
+                "DLS irradiance is not available - unable to compute reflectance"
+            )
 
     if warp_matrices is None:
         warp_matrices = ms_capture.get_warp_matrices()
@@ -719,6 +756,7 @@ def aligned_capture(
         interpolation_mode=interpolation_mode,
         crop_edges=crop_edges,
         irradiance=irradiance,
+        vc_g=vc_g,
         use_darkpixels=use_darkpixels,
     )
 
@@ -962,6 +1000,7 @@ def save_capture_as_stack(
     photometric: str = "MINISBLACK",
     compression: str = "lzw",
     odtype: str = "uint16",
+    refl_vrange: Optional[List[float]] = None,
     yml_fn: Optional[Path] = None,
     other_ds: Optional[dict] = None,
     other_tags: Optional[dict] = None,
@@ -982,6 +1021,8 @@ def save_capture_as_stack(
         The stack of aligned (or unaligned) images.
     out_filename : str or Path
         The output geotif filename
+    img_type : str
+        .
     photometric : str [Optional]
         GDAL argument (see https://gdal.org/drivers/raster/gtiff.html)
     compression : str [Optional]
@@ -993,7 +1034,10 @@ def save_capture_as_stack(
         * see https://exiftool.org/TagNames/EXIF.html#Compression
     odtype : str
         output dtype, options include "uint16", "float32"
-
+    refl_vrange : Optional[List[float]] = None
+        user-specified minimum & maximum value used to clip the
+        reflectance data. This argument (if specified) is only
+        used when `img_type` = "reflectance."
     yml_fn : Path [Optional]
         The image set metadata yaml. This is needed to write metadata into
         the exif tags. If not provided, then exif metadata will not be
@@ -1031,12 +1075,34 @@ def save_capture_as_stack(
     ocomp = compression.lower()
     raise_err(ocomp, "compression", AVAIL_COMP)
 
-    vis_sfactor, thermal_sfactor, thermal_offset = 1.0, 1.0, 0.0
+    vis_scale, vis_offset = 1.0, 0.0
+    thermal_sfactor, thermal_offset = 1.0, 0.0
     np_odt = np.dtype(odtype)
     nodata = np_odt.type(-9999.0)
+    max_dt_val = None
+
     if odtype == "uint16":
-        vis_sfactor = np.iinfo(np.dtype(odtype)).max
+        max_dt_val = np.iinfo(np.dtype(odtype)).max
         thermal_sfactor, thermal_offset = 100.0, 273.15
+
+        if img_type == "reflectance":
+            if not isinstance(refl_vrange, Iterable):
+                # allow sligtly negative values to account for (potentially)
+                # inaccurate dark pixel correction
+                refl_vrange = [-0.005, 1.0]
+
+            if len(refl_vrange) != 2:
+                raise ValueError("`refl_vrange` requires two elements [min, max]")
+            if refl_vrange[0] >= refl_vrange[1]:
+                raise ValueError("`min` >= `max` in `refl_vrange`")
+
+            vis_scale, vis_offset = convert_uint16(
+                minv=refl_vrange[0], maxv=refl_vrange[1]
+            )
+        else:
+            vis_scale = np.iinfo(np.dtype(odtype)).max
+            vis_offset = 0.0
+
         nodata = np_odt.type(0)
 
     nrows, ncols, nbands = im_aligned.shape
@@ -1071,7 +1137,6 @@ def save_capture_as_stack(
     }
 
     with rasterio.open(str(out_filename), "w", **meta) as dst:
-
         # iterate through the visible bands
         vis_wavel = ""
         for out_bix, in_bix in enumerate(eo_list):
@@ -1080,27 +1145,33 @@ def save_capture_as_stack(
             # identify flagged pixels (<=0.0) if img_type == "reflectance"
             # then pixels with values > 1.0 will also be masked.
             if img_type == "reflectance":
-                flagged_ix = (bandim <= 0) | (bandim > 1.0)
+                # allow sligtly negative values to account for (potentially)
+                # inaccurate dark pixel correction
+                flagged_ix = (bandim < refl_vrange[0]) | (bandim > refl_vrange[1])
             else:
                 flagged_ix = bandim <= 0
 
-            bandim[flagged_ix] = nodata
+            out_band = (bandim * vis_scale) + vis_offset
+            out_band[flagged_ix] = nodata
 
             # convert bandim from float32 to uint16.
             z_idx = out_bix + 1
-            dst.write(np.array(bandim * vis_sfactor, dtype=odtype), indexes=z_idx)
+            if odtype == "uint16":
+                dst.write(np.rint(out_band).astype(odtype), indexes=z_idx)
+            else:
+                dst.write(out_band.astype(odtype), indexes=z_idx)
 
             dst.set_band_description(z_idx, f"B{z_idx}_R({int(other_wvl[out_bix])} nm)")
             vis_wavel += f"{other_wvl[out_bix]},"
-            eval(f"dst.update_tags(B{z_idx}_scale={vis_sfactor})")
-            eval(f"dst.update_tags(B{z_idx}_offset=0)")
+            eval(f"dst.update_tags(B{z_idx}_scale={vis_scale})")
+            eval(f"dst.update_tags(B{z_idx}_offset={vis_offset})")
 
         # iterate through the thermal bands
         for out_bix, in_bix in enumerate(ms_capture.lw_indices()):
             bandim = (im_aligned[:, :, in_bix] + thermal_offset) * thermal_sfactor
             bandim[bandim < 0] = nodata
             if odtype == "uint16":
-                bandim[bandim > vis_sfactor] = vis_sfactor
+                bandim[bandim > max_dt_val] = max_dt_val
 
             z_idx = len(eo_list) + out_bix + 1
             dst.write(bandim.asdtype(odtype), indexes=z_idx)
@@ -1116,7 +1187,8 @@ def save_capture_as_stack(
                 offset = other_ds[k]["offset"]
 
                 scaled_d = other_ds[k]["data"] * scale + offset
-                scaled_d[scaled_d > vis_sfactor] = vis_sfactor
+                if odtype == "uint16":
+                    scaled_d[scaled_d > max_dt_val] = max_dt_val
 
                 dst.write(scaled_d.astype(odtype), indexes=z_idx)
                 dst.set_band_description(z_idx, f"B{z_idx}_{other_ds[k]['info']}")
@@ -1129,9 +1201,6 @@ def save_capture_as_stack(
         #       >>> with rasterio.open(tfile, "r") as src:
         #       >>>     custom_tags = src.tags()  # dict
         #       >>> solar_zenith = custom_tags["solarzenith"]  # float
-        if vis_sfactor:
-            dst.update_tags(vis_sfactor=vis_sfactor)
-
         if vis_wavel:
             if vis_wavel.endswith(","):
                 vis_wavel = vis_wavel[0:-1]

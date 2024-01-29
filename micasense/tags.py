@@ -9,7 +9,7 @@ from .utils import get_ave_focallen, get_ave_pc
 
 
 def ddeg_to_fraction(
-    ddeg: float, islat: bool, precision: int = 8
+    ddeg: float, islat: bool, precision: int = 6
 ) -> Tuple[str, Tuple[Fraction]]:
     """
     Convert decimal degrees to a List[Fraction]
@@ -22,7 +22,7 @@ def ddeg_to_fraction(
         Whether `ddeg` is latitude (True) or longitude (False)
     precision : int
         The precision of the seconds (from degree, minutes, seconds).
-        Max. precision is 8
+        Max. precision is 6
 
     Returns
     -------

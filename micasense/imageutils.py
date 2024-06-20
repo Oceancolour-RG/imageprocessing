@@ -560,11 +560,14 @@ def warp_matrices_wrapper(
     max_align_iter: int,
     warp_mode: int,
     pyramid_levels: int,
+    vig_md: Optional[dict] = None,
     base_path: Optional[Path] = None,
 ) -> List[np.ndarray]:
     """wrapper to create/save or load the warp matrices"""
     if not warp_npy_file.exists():
-        wrp_capture = Capture.from_yaml(yaml_file=uav_yaml_file, base_path=base_path)
+        wrp_capture = Capture.from_yaml(
+            yaml_file=uav_yaml_file, vig_md=vig_md, base_path=base_path
+        )
         warp_matrices, _ = refine_alignment_warp(
             ms_capture=wrp_capture,
             ref_index=match_index,

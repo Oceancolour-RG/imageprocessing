@@ -39,7 +39,7 @@ import micasense.dls as dls
 
 from os.path import isfile
 from pathlib import Path
-from typing import Optional, Union, Tuple
+from typing import Optional, Iterable, Union, Tuple
 
 
 # helper function to convert euler angles to a rotation matrix
@@ -394,7 +394,7 @@ class Image(object):
                 # DO NOT recompute if:
                 # 1) ``self.__reflectance_image`` exists, and
                 # 2) ``self.__vc_g`` equals user-specified ``vc_g``
-                # 3) ``self.__reflectance_irradiance`` equals user specified ``irradiance``
+                # 3) ``self.__reflectance_irradiance`` == user specified ``irradiance``
                 #    or the input irradiance is None
                 return self.__reflectance_image
 
@@ -485,6 +485,7 @@ class Image(object):
         force_recompute: bool = False,
         use_darkpixels: bool = True,
         vc_g: float = 1.0,
+        apply_vig: bool = True,
     ) -> np.ndarray:
         """
         Computes and returns the radiance image after all radiometric
@@ -505,6 +506,8 @@ class Image(object):
             mably from increases in temperature.
         vc_g : float
             Vicarious calibration gain to apply [default=1]
+        apply_vig : bool
+            Whether to perform vignettig (True) or not (False)
         """
         if force_recompute is False:
             if (self.__radiance_image is not None) and (self.__vc_g == vc_g):
@@ -541,13 +544,17 @@ class Image(object):
             #     lt_im.astype(float) / (self.gain * self.exposure_time) * a1 / max_raw_dn
             # )
 
-            # code following the equation of:
+            # new code following the equation of:
             # https://support.micasense.com/hc/en-us/articles/
             #    115000351194-Radiometric-Calibration-Model-for-MicaSense-Sensors
             normcorr_dn = (image_raw.astype("float64") - float(dc)) / max_raw_dn
             r_cal = a1 / (g_ * (te_ + (a2 * y) - (a3 * te_ * y)))  # float64
 
-            radiance_image = vc_g * vig * r_cal * normcorr_dn
+            if apply_vig:  # apply vignetting
+                radiance_image = vc_g * vig * r_cal * normcorr_dn
+            else:
+                radiance_image = vc_g * r_cal * normcorr_dn
+
             radiance_image[radiance_image < 0] = 0
 
         else:
@@ -558,17 +565,34 @@ class Image(object):
         self.__radiance_image = radiance_image.T
         return self.__radiance_image
 
-    def vignette(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Get a numpy array which defines the value to multiply each pixel by to correct
+    def vignette(
+        self, user_params: Optional[Iterable[float]] = None
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Get a numpy array which defines the value to multiply each pixel by to correct
         for optical vignetting effects.
         Note: this array is transposed from normal image orientation and comes as part
         of a three-tuple, the other parts of which are also used by the radiance method.
-        """
-        # get vignette center
-        vignette_center_x, vignette_center_y = self.vignette_center
 
-        # get a copy of the vignette polynomial because we want to modify it here
-        v_poly_list = list(self.vignette_polynomial)
+        user_params : Iterable[float]  [Optional]
+            If provided then user defined vignetting centre and polynomials
+            are used to model the vignetting
+
+            cx = user_params[0]
+            cy = user_params[1]
+            p0, p1, ..., p5 = user_params[1:]
+        """
+        if isinstance(user_params, Iterable):
+            # get vignette center
+            vignette_center_x, vignette_center_y = user_params[:2]
+            v_poly_list = list(user_params[2:])
+
+        else:
+            # get vignette center
+            vignette_center_x, vignette_center_y = self.vignette_center
+
+            # get a copy of the vignette polynomial because we want to modify it here
+            v_poly_list = list(self.vignette_polynomial)
 
         # reverse list and append 1., so that we can call with numpy polyval
         v_poly_list.reverse()
@@ -592,6 +616,30 @@ class Image(object):
         # image_corrected = image_original * vignetteCorrection
         vignette = 1.0 / np.polyval(v_polynomial, r)
         return vignette, x, y
+
+    def get_saturated_pxls(self, undistort: bool = True) -> np.ndarray:
+        """
+        Get the index locations of pixels considered saturated.
+        Here, a pixel is saturated if it's DN > (99 % of max. DN),
+        where max. DN = (2^16 - 1) = 65535,
+
+        Hence, saturated pixel: DN > 64880
+
+        Parameters
+        ----------
+        undistort : bool
+            Whether to undistort the raw image
+
+        Returns
+        -------
+        sat_ix : ndarray {dtype=bool}
+            Boolean array in which saturated pixel are True
+        """
+
+        if undistort:
+            return self.raw() > 64880
+        else:
+            return self.undistorted(image=self.raw()) > 64880
 
     def undistorted_radiance(
         self,

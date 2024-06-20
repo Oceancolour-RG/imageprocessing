@@ -65,5 +65,6 @@ setup(
         "tqdm>=4.65.0",
         "pyyaml>=6.0",
         "rasterio>=1.3.6",
+        "rglib>=0.0.1",
     ],
 )

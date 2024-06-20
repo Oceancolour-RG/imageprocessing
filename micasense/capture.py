@@ -32,13 +32,14 @@ import math
 import numpy as np
 from pathlib import Path
 from os.path import isfile
-from typing import Union, List, Optional, Tuple
+from matplotlib.figure import Figure
 from pysolar.solar import get_altitude, get_azimuth
+from typing import Union, List, Optional, Tuple, Iterable
 
 from .image import Image
 from .panel import Panel
 from .load_yaml import load_all
-from .plotutils import subplotwithcolorbar, subplot
+from .plotutils import subplotwithcolorbar
 
 
 class Capture(object):
@@ -233,37 +234,68 @@ class Capture(object):
         )
 
     def __plot(
-        self, images, num_cols=2, plot_type=None, color_bar=True, fig_size=(14, 14)
+        self,
+        images: np.ndarray,
+        num_cols: int = 2,
+        title: str = "",
+        cmap: str = "jet",
+        cbar: bool = True,
+        figsize: Iterable[int] = (14, 14),
+        vrange: Optional[Iterable[float]] = None,
+        selected_bands: Optional[Iterable[int]] = None,
+        show: bool = False,
     ):
         """
-        Plot the Images from the Capture.
-        :param images: List of Image objects
-        :param num_cols: int number of columns
-        :param plot_type: str for plot title formatting
-        :param color_bar: boolean to determine color bar inclusion
-        :param fig_size: Tuple size of the figure
-        :return: plotutils result. matplotlib Figure and Axis in both cases.
+        Plot a list images from the Capture object
+
+        Parameters
+        ----------
+        images : np.ndarray, {dims=(nbands, nrows, ncols)}
+            Image cube
+        num_cols : int
+            Number of columns in the figure
+        title : str
+            plot title
+        cmap : str
+            registered colormap name used to map scalar data to colors
+        cbar : bool
+            boolean to determine color bar inclusion
+        figsize : Iterable[int] {Optional}
+            Tuple size of the figure
+        vrange: Iterable[float] {Optional}
+            common data range [vmin, vmax] that the colour map covers
+        selected_bands : Iterable[int] {Optional}
+            user selected bands (given by their indices) to display.
+            Here, indexing starts at 0
+        show : bool
+            whether to show the image with plt.show()
+
+        Returns
+        -------
+        matplotlib Figure and Axis in both cases.
         """
-        if plot_type is None:
-            plot_type = ""
-        else:
-            titles = [
-                "{} Band {} {}".format(
-                    str(img.band_name),
-                    str(img.band_index),
-                    (
-                        plot_type
-                        if img.band_name.upper() != "LWIR"
-                        else "Brightness Temperature"
-                    ),
-                )
-                for img in self.images
-            ]
-        num_rows = int(math.ceil(float(len(self.images)) / float(num_cols)))
-        if color_bar:
-            return subplotwithcolorbar(num_rows, num_cols, images, titles, fig_size)
-        else:
-            return subplot(num_rows, num_cols, images, titles, fig_size)
+        if selected_bands is None:
+            selected_bands = [i for i in range(len(images))]
+
+        axtitles = []
+        for sb in selected_bands:
+            for i in self.images:
+                if i.band_index == sb:
+                    axtitles.append(f"Band {i.band_index} ({i.center_wavelength} nm)")
+
+        num_rows = int(math.ceil(float(len(selected_bands)) / float(num_cols)))
+        return subplotwithcolorbar(
+            rows=num_rows,
+            cols=num_cols,
+            images=images[selected_bands, :, :],
+            suptitle=title,
+            cmap=cmap,
+            cbar=cbar,
+            titles=axtitles,
+            figsize=figsize,
+            vrange=vrange,
+            show=show,
+        )
 
     def __lt__(self, other):
         return self.utc_time() < other.utc_time()
@@ -367,26 +399,72 @@ class Capture(object):
 
     def plot_raw(self):
         """Plot raw images as the data came from the camera."""
-        self.__plot([img.raw() for img in self.images], plot_type="Raw")
+        self.__plot([img.raw() for img in self.images], title="Raw", show=True)
 
-    def plot_vignette(self):
-        """Compute (if necessary) and plot vignette correction images."""
-        self.__plot([img.vignette()[0].T for img in self.images], plot_type="Vignette")
+    def plot_vignette(
+        self,
+        cmap: str = "jet",
+        vrange: Optional[Iterable[float]] = None,
+        figsize: Optional[Iterable[float]] = None,
+        selected_bands: Optional[Iterable[int]] = None,
+        show: bool = False,
+    ) -> Tuple[Figure, np.ndarray]:
+        """
+        Compute (if necessary) and plot vignette correction images
+
+        Parameters
+        ----------
+        cmap : str
+            registered colormap name used to map scalar data to colors
+        vrange : Iterable[float] {Optional}
+            common data range [vmin, vmax] that the colour map covers
+        figsize : Iterable[float] {Optional}
+            Tuple size of the figure
+        selected_bands : Iterable[int] {Optional}
+            user selected bands (given by their indices) to display.
+            Here, indexing starts at 0
+        show : bool
+            whether to show the image with plt.show()
+
+        Returns
+        -------
+        fig, axes
+        """
+        return self.__plot(
+            images=np.array([img.vignette()[0].T for img in self.images]),
+            title="Vignetting correction",
+            figsize=figsize,
+            vrange=vrange,
+            cmap=cmap,
+            selected_bands=selected_bands,
+        )
 
     def plot_radiance(self, **kw):
         """Compute (if necessary) and plot radiance images."""
-        self.__plot([img.radiance(**kw) for img in self.images], plot_type="Radiance")
+        self.__plot(
+            images=np.array([img.radiance(**kw) for img in self.images]),
+            title="Radiance",
+            show=True,
+        )
 
     def plot_undistorted_radiance(self, **kw):
         """Compute (if necessary) and plot undistorted radiance images."""
         self.__plot(
-            [img.undistorted(img.radiance(**kw)) for img in self.images],
-            plot_type="Undistorted Radiance",
+            images=np.array([img.undistorted(img.radiance(**kw)) for img in self.images]),
+            title="Undistorted Radiance",
+            show=True,
         )
 
     def plot_undistorted_reflectance(
-        self, irradiance_list: List[float], vcg_list: List[float]
-    ) -> None:
+        self,
+        irradiance_list: List[float],
+        vcg_list: List[float],
+        cmap: str = "jet",
+        figsize: Optional[Iterable[float]] = None,
+        vrange: Optional[Iterable[float]] = None,
+        selected_bands: Optional[Iterable[float]] = None,
+        show: bool = False,
+    ) -> Tuple[Figure, np.ndarray]:
         """
         Compute (if necessary) and plot reflectances given a list
         of irradiances.
@@ -400,10 +478,35 @@ class Capture(object):
 
         vcg_list : List[float]
             A list of vicarious calibration gains
+
+        cmap : str
+            registered colormap name used to map scalar data to colors
+        figsize : Iterable[float] {Optional}
+            Tuple size of the figure
+        vrange : Iterable[float] {Optional}
+            common data range [vmin, vmax] that the colour map covers
+        selected_bands : Iterable[int] {Optional}
+            user selected bands (given by their indices) to display.
+            Here, indexing starts at 0
+        show : bool
+            whether to show the image with plt.show()
+
+
+        Returns
+        -------
+        fig, axes
         """
-        self.__plot(
-            self.undistorted_reflectance(irradiance=irradiance_list, vc_g=vcg_list),
-            plot_type="Undistorted Reflectance",
+        images = np.array(
+            self.undistorted_reflectance(irradiance=irradiance_list, vc_g=vcg_list)
+        )
+        return self.__plot(
+            images=images,
+            title="Undistorted Reflectance",
+            figsize=figsize,
+            vrange=vrange,
+            cmap=cmap,
+            selected_bands=selected_bands,
+            show=show,
         )
 
     def compute_radiance(
@@ -743,7 +846,7 @@ class Capture(object):
             if not self.panels_in_all_expected_images():
                 raise IOError("Panels not detected in all images.")
         self.__plot(
-            [p.plot_image() for p in self.panels], plot_type="Panels", color_bar=False
+            [p.plot_image() for p in self.panels], title="Panels", cbar=False
         )
 
     def set_external_rig_relatives(self, external_rig_relatives) -> None:

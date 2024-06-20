@@ -28,39 +28,142 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from matplotlib.pylab import cm
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from typing import Optional, List, Iterable, Tuple, Union
 
 
-def plotwithcolorbar(img, title=None, figsize=None, vmin=None, vmax=None):
+def check_vrange(vrange: Union[Iterable[float], None]) -> Tuple[Union[None, float]]:
+    """
+    Parameters
+    ----------
+    vrange : Iterable[float] or None
+        the common data range [vmin, vmax] that the colour map covers
+
+    Returns
+    -------
+    vmin, vmax : float or None
+    """
+    if isinstance(vrange, Iterable):
+        if len(vrange) != 2:
+            raise ValueError("`vrange` must be Iterable with two elements")
+        if vrange[1] <= vrange[0]:
+            raise ValueError("vrange[1] must be greater or equal to vrange[0]")
+
+        vmin = vrange[0]
+        vmax = vrange[1]
+    else:
+        vmin = None
+        vmax = None
+
+    return vmin, vmax
+
+
+def plotwithcolorbar(
+    img: np.ndarray,
+    title: str = "",
+    figsize: Optional[Iterable[int]] = None,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+):
     """Plot an image with a colorbar"""
     fig, axis = plt.subplots(1, 1, figsize=figsize)
-    rad2 = axis.imshow(img, vmin=vmin, vmax=vmax)
-    axis.set_title(title)
+    rad2 = axis.imshow(img, vmin=vmin, vmax=vmax, interpolation="None")
+    if title:
+        axis.set_title(title)
+
     divider = make_axes_locatable(axis)
     cax = divider.append_axes("right", size="3%", pad=0.05)
     fig.colorbar(rad2, cax=cax)
+
     plt.tight_layout()
     plt.show()
     return fig, axis
 
 
-def subplotwithcolorbar(rows, cols, images, titles=None, figsize=None):
-    """Plot a set of images in subplots"""
+def subplotwithcolorbar(
+    rows: int,
+    cols: int,
+    images: np.ndarray,
+    suptitle: str = "",
+    cmap: str = "jet",
+    cbar: bool = True,
+    titles: Optional[List[str]] = None,
+    figsize: Optional[Iterable[float]] = None,
+    vrange: Optional[Iterable[float]] = None,
+    show: bool=False,
+) -> Tuple[Figure, np.ndarray]:
+    """
+    Plot a set of images in subplots
+
+    Parameters
+    ----------
+    rows : int
+        Number of rows in the figure
+    cols : int
+        Number of columns in the figure
+    images : np.ndarray, {dims=(nbands, nrows, ncols)}
+        Image cube
+    suptitle : str
+        Suptitle of the figure
+    cmap : str
+        Registered colormap name used to map scalar data to colors
+    cbar : bool
+        whether to add colorbar(s)
+    titles : List[str] {Optional}
+        Title names for each image in `images`
+    figsize : Iterable[float] {Optional}
+        Tuple size of the figure
+    vrange : Iterable[float] {Optional}
+        Common data range [vmin, vmax] that the colour map covers
+    show : bool
+        whether to show the image with plt.show()
+
+    Returns
+    -------
+    fig : Figure
+        matplotlib Figure instance
+    axes : np.ndarray[Axes]
+        np.ndarray of matplotlib Axes instances
+
+    Notes
+    -----
+    ** if `vrange` is specified, then a shared, vertical color bar is
+       added because all subplots have the same [vmin, vmax]
+
+    """
     fig, axes = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
+
+    vmin, vmax = check_vrange(vrange)
+
     for i in range(cols * rows):
-        column = int(i % cols)
-        row = int(i / cols)
+        c = int(i % cols)
+        r = int(i / cols)
         if i < len(images):
-            rad = axes[row][column].imshow(images[i])
+            rad = axes[r][c].imshow(
+                images[i, :, :], interpolation="None", vmin=vmin, vmax=vmax, cmap=cmap
+            )
+
             if titles is not None:
-                axes[row][column].set_title(titles[i])
-            divider = make_axes_locatable(axes[row][column])
-            cax = divider.append_axes("right", size="3%", pad=0.05)
-            fig.colorbar(rad, cax=cax)
-        else:
-            axes[row, column].axis("off")
-    plt.tight_layout()
-    plt.show()
+                axes[r][c].set_title(titles[i])
+
+            if (vrange is None) and cbar:
+                # add an individual colour bar to each subplot
+                divider = make_axes_locatable(axes[r][c])
+                cax = divider.append_axes("right", size="3%", pad=0.05)
+                fig.colorbar(rad, cax=cax)
+
+        axes[r, c].axis("off")
+
+    if (vrange is not None) and cbar:
+        fig.colorbar(rad, ax=axes.ravel().tolist())
+
+    if suptitle:
+        fig.suptitle(suptitle)
+
+    if show:
+        plt.show()
     return fig, axes
 
 
@@ -110,23 +213,6 @@ def plot_overlay_withcolorbar(
     if show:
         plt.show()
     return fig, axis[0][0]
-
-
-def subplot(rows, cols, images, titles=None, figsize=None):
-    """Plot a set of images in subplots"""
-    fig, axes = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
-    for i in range(cols * rows):
-        column = int(i % cols)
-        row = int(i / cols)
-        if i < len(images):
-            axes[row][column].imshow(images[i])
-            if titles is not None:
-                axes[row][column].set_title(titles[i])
-        else:
-            axes[row, column].axis("off")
-    plt.tight_layout()
-    plt.show()
-    return fig, axes
 
 
 def colormap(cmap):

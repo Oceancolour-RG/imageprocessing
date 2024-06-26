@@ -33,31 +33,7 @@ from matplotlib.figure import Figure
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from typing import Optional, List, Iterable, Tuple, Union
 
-
-def check_vrange(vrange: Union[Iterable[float], None]) -> Tuple[Union[None, float]]:
-    """
-    Parameters
-    ----------
-    vrange : Iterable[float] or None
-        the common data range [vmin, vmax] that the colour map covers
-
-    Returns
-    -------
-    vmin, vmax : float or None
-    """
-    if isinstance(vrange, Iterable):
-        if len(vrange) != 2:
-            raise ValueError("`vrange` must be Iterable with two elements")
-        if vrange[1] <= vrange[0]:
-            raise ValueError("vrange[1] must be greater or equal to vrange[0]")
-
-        vmin = vrange[0]
-        vmax = vrange[1]
-    else:
-        vmin = None
-        vmax = None
-
-    return vmin, vmax
+from micasense.checks import check_vrange
 
 
 def plotwithcolorbar(

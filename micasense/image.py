@@ -58,6 +58,99 @@ def rotations_degrees_to_rotation_matrix(rotation_degrees: np.ndarray) -> np.mat
     return r_x * r_y * r_z
 
 
+def check_vigparms(vig_params: Union[dict, None], order: int = 6) -> None:
+    """
+    check the user-specified vignetting parameters. This function is
+    primarily used in the image.Image class
+
+    Parameters
+    ----------
+    vig_params : dict or None
+        vignetting parameter dictionary with the following keys
+        {
+            "vignette_center": [float, float],  # x, y
+            "vignette_polynomial": List[float],  # vignetting polynomials
+        }
+        Here, the 'vignette_polynomial' must be an Iterable
+        with n-order of elements
+
+    order : int [default = 6]
+        Polynomial order of vignetting model
+    """
+
+    def _checknum(v: float) -> bool:
+        """Check whether the variable `v` is float or int"""
+        return isinstance(v, (int, float))
+
+    err = "{0} must be an iterable with {1} elements\n{0}: {2}"
+
+    if vig_params is not None:
+        if not isinstance(vig_params, dict):
+            raise TypeError("vig_params must be a dictionary (or None)")
+
+        # --- check "vignette_centre" --- #
+        if "vignette_center" not in vig_params:
+            raise ValueError("vig_params must contain 'vignette_center'")
+        else:
+            tmp1 = vig_params["vignette_center"]
+            err1 = err.format(
+                "vig_params['vignette_center']", "two positive numeric", tmp1
+            )
+            if isinstance(tmp1, Iterable):
+                if (len(tmp1) != 2) or (not all([_checknum(v) and v > 0 for v in tmp1])):
+                    # check if vignette_centre has two positive numeric elements
+                    raise ValueError(err1)
+            else:
+                # vignette_center is not an Iterable
+                raise ValueError(err1)
+
+        # --- check "vignette_polynomial" --- #
+        if "vignette_polynomial" not in vig_params:
+            raise ValueError("vig_params must contain 'vignette_polynomial'")
+        else:
+            tmp2 = vig_params["vignette_polynomial"]
+            err2 = err.format(
+                "vig_params['vignette_polynomial']", f"{order} numeric", tmp2
+            )
+            if isinstance(tmp2, Iterable):
+                if (len(tmp2) != order) or (not all([_checknum(v) for v in tmp2])):
+                    # check if vignette_polynomial has {order} numeric elements
+                    raise ValueError(err2)
+            else:
+                # vignette_polynomial is not an Iterable
+                raise ValueError(err2)
+
+    return
+
+
+def check_dc(dark_current: Union[float, int, None], bits_per_pixel: int) -> None:
+    """
+    Check the dark current value. This function is primarily
+    used in the image.Image class
+
+
+    Parameters
+    ----------
+    dark_current : float, int or None
+        dark current value (must be greater than 0 and less
+        than the maximum DN value)
+
+    bits_per_pixel : int
+        pixel bits (used to get the maximum DN value)
+    """
+    max_dn = (2**bits_per_pixel) - 1
+
+    if dark_current is not None:
+        if isinstance(dark_current, (float, int)):
+            err = f"`dark_current` ({dark_current}) must range between 0 and {max_dn}"
+            if (dark_current < 0) or (dark_current >= max_dn):
+                raise ValueError(err)
+        else:
+            raise TypeError("`dark_current` must be float, int or None")
+
+    return
+
+
 class Image(object):
     """
     An Image is a single file taken by a RedEdge camera representing one
@@ -69,6 +162,8 @@ class Image(object):
         image_path: Union[Path, str],
         yaml_path: Optional[Union[Path, str]] = None,
         metadata_dict: Optional[dict] = None,
+        vig_params: Optional[dict] = None,
+        dark_current: Optional[Union[float, int]] = None,
     ):
         """
         Create an Image object from a single band.
@@ -86,12 +181,32 @@ class Image(object):
         metadata_dict : dict [Optional]
             The metadata dictionary of the image_path
 
+        vig_params : dict [Optional]
+            User defined vignetting parameters. This dictionary
+            must have the following keys,
+            {
+                "vignette_center": [float, float],  # x, y
+                "vignette_polynomial": List[float],  # vignetting polynomials
+            }
+            Here, the vignetting polynomials must have six values
+            for the model given in:
+            https://support.micasense.com/hc/en-us/articles/
+               115000351194-Radiometric-Calibration-Model-for-MicaSense-Sensors
+
+        dark_current : float or int [Optional]
+            User defined dark current value (must be greater than 0 and
+            less than the maximum DN value)
+
         Notes
         -----
-          +++ if both metadata_dict and yaml_path are specified then
-              metadata_dict is used, while ignoring yaml_path
-          +++ if metadata_dict=None while the yaml_path is specified,
-              then the metadata_dict is loaded from yaml_path
+          1) `vig_params` and  `dark_current` should be used for testing
+             purposes. For operational workflows, it is recommended that
+             the default vignetting and dark current parameters stored
+             in the `yaml_path` be replaced with calibrated values.
+          2) if both `metadata_dict` and `yaml_path` are specified then
+             `metadata_dict` is used, while ignoring `yaml_path`
+          3) if metadata_dict=None while the `yaml_path` is specified,
+             then the `metadata_dict` is loaded from `yaml_path`
         """
         if not isfile(image_path):
             raise IOError(f"Provided path is not a file: {image_path}")
@@ -134,16 +249,27 @@ class Image(object):
         self.flight_id = self.meta.flight_id()
         self.band_name = self.meta.band_name()
         self.band_index = self.meta.band_index()
-        self.black_level = self.meta.black_level()
-        self.dark_pixels = self.meta.dark_pixels()
         if self.meta.supports_radiometric_calibration():
             self.radiometric_cal = self.meta.radiometric_cal()
         self.exposure_time = self.meta.exposure()
         self.gain = self.meta.gain()
         self.bits_per_pixel = self.meta.bits_per_pixel()
 
+        # ---------- dark current ---------- #
+        self.black_level = self.meta.black_level()
+        self.dark_pixels = self.meta.dark_pixels()
+        self.user_dark_current = dark_current  # float or None
+        check_dc(self.user_dark_current, self.bits_per_pixel)  # run check
+
+        # ---------- vignetting ---------- #
         self.vignette_center = self.meta.vignette_center()
         self.vignette_polynomial = self.meta.vignette_polynomial()
+
+        # Get the user vignetting parameters (if provided)
+        self.user_vig_params = vig_params  # dict or None
+        check_vigparms(self.user_vig_params)  # run checks
+
+        # ---------- lens calibration ---------- #
         self.distortion_parameters = self.meta.distortion_parameters()
         self.principal_point = self.meta.principal_point()
         self.focal_plane_resolution_px_per_mm = (
@@ -151,6 +277,7 @@ class Image(object):
         )
         self.focal_length = self.meta.focal_length_mm()
         self.focal_length_35 = self.meta.focal_length_35_mm_eq()
+
         self.center_wavelength = self.meta.center_wavelength()
         self.bandwidth = self.meta.bandwidth()
         self.rig_relatives = self.meta.rig_relatives()
@@ -303,10 +430,12 @@ class Image(object):
     def set_raw(self, img: np.ndarray) -> None:
         """set raw image from input img"""
         self.__raw_image = img.astype(np.uint16)
+        return
 
     def set_undistorted(self, img: np.ndarray) -> None:
         """set undistorted image from input img"""
         self.__undistorted_image = img.astype(np.uint16)
+        return
 
     def set_external_rig_relatives(self, external_rig_relatives) -> None:
         self.rig_translations = external_rig_relatives["rig_translations"]
@@ -320,7 +449,8 @@ class Image(object):
         ry = self.focal_plane_resolution_px_per_mm[1]
         self.principal_point = [px / rx, py / ry]
         self.focal_length = (fx + fy) * 0.5 / rx
-        # to do - set the distortion etc.
+        # TODO - set the distortion etc.
+        return
 
     def clear_image_data(self) -> None:
         """clear all computed images to reduce memory overhead"""
@@ -332,104 +462,157 @@ class Image(object):
         self.__undistorted_source = None
         self.__undistorted_image = None
         self.__vc_g = None
+        return
 
     def size(self) -> Tuple[int, int]:
         width, height = self.meta.image_size()
         return width, height
 
-    def reflectance(
-        self,
-        irradiance: Optional[float] = None,
-        force_recompute: bool = False,
-        use_darkpixels: bool = True,
-        vc_g: float = 1.0,
-        return_rrs: bool = False,
-    ) -> np.ndarray:
+    def get_saturated_pxls(self, undistort: bool = True) -> np.ndarray:
         """
-        Lazy-compute and return a reflectance image
-        provided an irradiance reference
+        Get the index locations of pixels considered saturated.
+        Here, a pixel is saturated if it's DN > (99 % of max. DN),
+        where max. DN = (2^16 - 1) = 65535,
+
+        Hence, saturated pixel: DN > 64880
 
         Parameters
         ----------
-        irradiance : float [Optional]
-            The irradiance used to normalise the radiance image.
-            If None then the horizontal irradiance from the DLS2
-            will be used.
-
-        force_recompute : bool
-            Recompute the reflectance image even if already done so.
-
-        use_darkpixels : bool
-            Whether to use the `dark_pixels` (True) or `black_level` (False).
-            Note:
-            `black_level` has a temporally constant value of 4800 across all bands.
-            This is unrealistic as the dark current increases with sensor temperature.
-            `dark_pixels` the averaged DN of the optically covered pixel values. This
-            value is different for each band and varies across an acquisition, presu-
-            mably from increases in temperature.
-
-        vc_g : float
-            Vicarious calibration gains to apply during radiance computation
-
-        return_rrs : bool
-            if True : returns remote sensing reflectance, Rrs, (units: 1/sr)
-            if False: returns Reflectance (units: a.u.)
-            This only applies to VIS-NIR bands not LWIR
+        undistort : bool
+            Whether to undistort the raw image
 
         Returns
         -------
-        reflectance : np.ndarray
-            Reflectance or Rrs image
+        sat_ix : ndarray {dtype=bool}
+            Boolean array in which saturated pixel are True
         """
-        # print(
-        #     f"Computing reflectance for {self.band_name} ({self.band_index}),"
-        #     f"{self.center_wavelength}, {self.dark_pixels}, {self.black_level}"
-        # )
-        if not force_recompute:
-            if (
-                self.__reflectance_image is not None
-                and self.__vc_g == vc_g
-                and (self.__reflectance_irradiance == irradiance or irradiance is None)
-            ):
-                # DO NOT recompute if:
-                # 1) ``self.__reflectance_image`` exists, and
-                # 2) ``self.__vc_g`` equals user-specified ``vc_g``
-                # 3) ``self.__reflectance_irradiance`` == user specified ``irradiance``
-                #    or the input irradiance is None
-                return self.__reflectance_image
 
-        rad_kw = {"use_darkpixels": use_darkpixels, "vc_g": vc_g}
-
-        if self.band_name != "LWIR":
-            if irradiance is None:
-                # User has not provided an irradiance value - get the
-                # DLS2 irradiance value (if it exists)
-                if self.horizontal_irradiance != 0.0:
-                    irradiance = self.horizontal_irradiance
-                    # self.__reflectance_irradiance remains None - is this for a reason?
-                else:
-                    raise ValueError(
-                        "horizontal irradiance value is 0.0 - please provide "
-                        "a band-specific spectral irradiance to compute reflectance"
-                    )
-            else:
-                # Apply the user-specified irradiance value
-                self.__reflectance_irradiance = irradiance
-
-            # print(f"irradiance at {self.center_wavelength}: {irradiance}")
-            # compute the Reflectance or Remote sensing reflectance
-            if return_rrs:
-                self.__reflectance_image = self.radiance(**rad_kw) / irradiance
-            else:
-                self.__reflectance_image = math.pi * self.radiance(**rad_kw) / irradiance
+        if undistort:
+            return self.raw() > 64880
         else:
-            # Return the LongWave IR radiance image as-is
-            self.__reflectance_image = self.radiance(**rad_kw)
+            return self.undistorted(image=self.raw()) > 64880
 
-        return self.__reflectance_image
+    def vignette(
+        self, user_params: Optional[dict] = None
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Get the vignetting correction derived from a six-ordered
+        polynomial model.
+
+        Parameters
+        ----------
+        user_params : dict [Optional]
+            If provided then user-defined vignetting centre and polynom-
+            ials are used to model the vignetting. This is only used for
+            testing of new model coefficients and debugging purposes. To
+            apply new vignetting coefficients into the radiance and ref-
+            lectance calculations run,
+            >>> Image(filename, vig_params)
+
+            Where `vig_params` will be used instead of the default values
+
+            `user_params` must have the following keys:
+            {
+                "vignette_center": [float, float],  # x, y
+                "vignette_polynomial": List[float],  # vignetting polynomials
+            }
+            Here, the vignetting polynomials must have six values
+            https://support.micasense.com/hc/en-us/articles/
+               115000351194-Radiometric-Calibration-Model-for-MicaSense-Sensors
+
+        Returns
+        -------
+        vigcorr : np.ndarray
+            Vignetting correction
+        x, y : np.ndarray's
+            x and y meshgrid
+
+        Note: vigcorr, x and y are transposed from normal image orientation
+        """
+        if isinstance(user_params, dict):
+            # get vignette center
+            print("Testing mode in `vignette()`: user_params specified")
+            check_vigparms(user_params)
+            vignette_center_x = user_params["vignette_center"][0]
+            vignette_center_y = user_params["vignette_center"][1]
+            v_poly_list = user_params["vignette_polynomial"].copy()
+
+        else:
+            # `self.user_vig_params` has already been checked in __init__()
+            if self.user_vig_params:
+                vignette_center_x = self.user_vig_params["vignette_center"][0]
+                vignette_center_y = self.user_vig_params["vignette_center"][1]
+                v_poly_list = self.user_vig_params["vignette_polynomial"].copy()
+
+            else:
+                # use default values if `self.user_vig_params` is None
+                vignette_center_x, vignette_center_y = self.vignette_center
+                v_poly_list = list(self.vignette_polynomial)
+
+        # reverse list and append 1., so that we can call with numpy polyval
+        v_poly_list.reverse()
+        v_poly_list.append(1.0)
+        v_polynomial = np.array(v_poly_list)
+
+        # perform vignette correction
+        # get coordinate grid across image, seem swapped because of transposed vignette
+        x_dim, y_dim = self.raw().shape[1], self.raw().shape[0]
+        x, y = np.meshgrid(np.arange(x_dim), np.arange(y_dim))
+
+        # meshgrid returns transposed arrays
+        x = x.T
+        y = y.T
+
+        # compute matrix of distances from image center
+        r = np.hypot((x - vignette_center_x), (y - vignette_center_y))
+
+        # compute the vignette polynomial for each distance - we divide by the
+        # polynomial so that the corrected image is,
+        # image_corrected = image_original * vignetteCorrection
+        vigcorr = 1.0 / np.polyval(v_polynomial, r)
+        return vigcorr, x, y
+
+    def select_dc(self, which_dc: str, func_name: str) -> float:
+        """
+        Select the dark current offset to apply
+
+        Parameters
+        ----------
+        which_dc : str
+            Which dark current offset to apply ('dark', 'black' or 'user')
+
+        func_name : str
+            Function name that is using `select_dc` for useful warning
+            print-out
+
+        Returns
+        -------
+        dc : float
+           The dark current offset
+        """
+        if which_dc not in ["dark", "black", "user"]:
+            raise ValueError(
+                f"`which_dc` ({which_dc}) must be 'dark', 'black', or  'user'"
+            )
+        if which_dc == "user":
+            if self.user_dark_current is None:
+                print(
+                    f"{func_name}: user-specified dark current value not supplied when "
+                    "initiating Image class. Using dark pixels instead"
+                )
+                dc = self.dark_pixels
+            else:
+                dc = self.user_dark_current
+
+        elif which_dc == "black":  # use black-level
+            dc = self.black_level
+        else:  # use dark pixels
+            dc = self.dark_pixels
+
+        return dc
 
     def intensity(
-        self, force_recompute: bool = False, use_darkpixels: bool = True
+        self, force_recompute: bool = False, which_dc: str = "dark"
     ) -> np.ndarray:
         """
         Computes and return the intensity image after black level, vignette,
@@ -441,15 +624,20 @@ class Image(object):
         force_recompute : bool
             Recompute the reflectance image even if already done so.
 
-        use_darkpixels : bool
-            Whether to use the `dark_pixels` (True) or `black_level` (False).
+        which_dc : str
+            Whether to use the `dark_pixels` ("dark"), `black_level` ("black"), or
+            `user_defined` ("user")
             Note:
             `black_level` has a temporally constant value of 4800 across all bands.
             This is unrealistic as the dark current increases with sensor temperature.
             `dark_pixels` the averaged DN of the optically covered pixel values. This
             value is different for each band and varies across an acquisition, presu-
             mably from increases in temperature.
+            `user_defined` temperature invariant value acquired through a dark
+            current assessment
         """
+        dc = self.select_dc(which_dc=which_dc.lower(), func_name="intensity")
+
         if self.__intensity_image is not None and force_recompute is False:
             return self.__intensity_image
 
@@ -468,7 +656,6 @@ class Image(object):
         vig, x, y = self.vignette()
         r_cal = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
 
-        dc = self.dark_pixels if use_darkpixels else self.black_level
         lt_im = vig * r_cal * (image_raw - dc)
         lt_im[lt_im < 0] = 0
 
@@ -483,7 +670,7 @@ class Image(object):
     def radiance(
         self,
         force_recompute: bool = False,
-        use_darkpixels: bool = True,
+        which_dc: str = "dark",
         vc_g: float = 1.0,
         apply_vig: bool = True,
     ) -> np.ndarray:
@@ -496,16 +683,21 @@ class Image(object):
         force_recompute : bool
             Recompute the reflectance image even if already done so.
 
-        use_darkpixels : bool
-            Whether to use the `dark_pixels` (True) or `black_level` (False).
+        which_dc : str
+            Whether to use the `dark_pixels` ("dark"), `black_level` ("black"), or
+            `user_defined` ("user")
             Note:
             `black_level` has a temporally constant value of 4800 across all bands.
             This is unrealistic as the dark current increases with sensor temperature.
             `dark_pixels` the averaged DN of the optically covered pixel values. This
             value is different for each band and varies across an acquisition, presu-
             mably from increases in temperature.
+            `user_defined` temperature invariant value acquired through a dark
+            current assessment
+
         vc_g : float
             Vicarious calibration gain to apply [default=1]
+
         apply_vig : bool
             Whether to perform vignettig (True) or not (False)
         """
@@ -533,7 +725,7 @@ class Image(object):
 
             # apply image correction methods to raw image
             vig, x, y = self.vignette()
-            dc = self.dark_pixels if use_darkpixels else self.black_level
+            dc = self.select_dc(which_dc=which_dc.lower(), func_name="radiance")
 
             # original code (below - commented out) is hard to follow:
             # r_cal = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
@@ -565,92 +757,108 @@ class Image(object):
         self.__radiance_image = radiance_image.T
         return self.__radiance_image
 
-    def vignette(
-        self, user_params: Optional[Iterable[float]] = None
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def reflectance(
+        self,
+        irradiance: Optional[float] = None,
+        force_recompute: bool = False,
+        which_dc: str = "dark",
+        vc_g: float = 1.0,
+        return_rrs: bool = False,
+    ) -> np.ndarray:
         """
-        Get a numpy array which defines the value to multiply each pixel by to correct
-        for optical vignetting effects.
-        Note: this array is transposed from normal image orientation and comes as part
-        of a three-tuple, the other parts of which are also used by the radiance method.
-
-        user_params : Iterable[float]  [Optional]
-            If provided then user defined vignetting centre and polynomials
-            are used to model the vignetting
-
-            cx = user_params[0]
-            cy = user_params[1]
-            p0, p1, ..., p5 = user_params[1:]
-        """
-        if isinstance(user_params, Iterable):
-            # get vignette center
-            vignette_center_x, vignette_center_y = user_params[:2]
-            v_poly_list = list(user_params[2:])
-
-        else:
-            # get vignette center
-            vignette_center_x, vignette_center_y = self.vignette_center
-
-            # get a copy of the vignette polynomial because we want to modify it here
-            v_poly_list = list(self.vignette_polynomial)
-
-        # reverse list and append 1., so that we can call with numpy polyval
-        v_poly_list.reverse()
-        v_poly_list.append(1.0)
-        v_polynomial = np.array(v_poly_list)
-
-        # perform vignette correction
-        # get coordinate grid across image, seem swapped because of transposed vignette
-        x_dim, y_dim = self.raw().shape[1], self.raw().shape[0]
-        x, y = np.meshgrid(np.arange(x_dim), np.arange(y_dim))
-
-        # meshgrid returns transposed arrays
-        x = x.T
-        y = y.T
-
-        # compute matrix of distances from image center
-        r = np.hypot((x - vignette_center_x), (y - vignette_center_y))
-
-        # compute the vignette polynomial for each distance - we divide by the
-        # polynomial so that the corrected image is,
-        # image_corrected = image_original * vignetteCorrection
-        vignette = 1.0 / np.polyval(v_polynomial, r)
-        return vignette, x, y
-
-    def get_saturated_pxls(self, undistort: bool = True) -> np.ndarray:
-        """
-        Get the index locations of pixels considered saturated.
-        Here, a pixel is saturated if it's DN > (99 % of max. DN),
-        where max. DN = (2^16 - 1) = 65535,
-
-        Hence, saturated pixel: DN > 64880
+        Lazy-compute and return a reflectance image
+        provided an irradiance reference
 
         Parameters
         ----------
-        undistort : bool
-            Whether to undistort the raw image
+        irradiance : float [Optional]
+            The irradiance used to normalise the radiance image.
+            If None then the horizontal irradiance from the DLS2
+            will be used.
+
+        force_recompute : bool
+            Recompute the reflectance image even if already done so.
+
+        which_dc : str
+            Whether to use the `dark_pixels` ("dark"), `black_level` ("black"), or
+            `user_defined` ("user")
+            Note:
+            `black_level` has a temporally constant value of 4800 across all bands.
+            This is unrealistic as the dark current increases with sensor temperature.
+            `dark_pixels` the averaged DN of the optically covered pixel values. This
+            value is different for each band and varies across an acquisition, presu-
+            mably from increases in temperature.
+            `user_defined` temperature invariant value acquired through a dark
+            current assessment
+
+        vc_g : float
+            Vicarious calibration gains to apply during radiance computation
+
+        return_rrs : bool
+            if True : returns remote sensing reflectance, Rrs, (units: 1/sr)
+            if False: returns Reflectance (units: a.u.)
+            This only applies to VIS-NIR bands not LWIR
 
         Returns
         -------
-        sat_ix : ndarray {dtype=bool}
-            Boolean array in which saturated pixel are True
+        reflectance : np.ndarray
+            Reflectance or Rrs image
         """
+        # print(
+        #     f"Computing reflectance for {self.band_name} ({self.band_index}),"
+        #     f"{self.center_wavelength}, {self.dark_pixels}, {self.black_level}"
+        # )
+        if not force_recompute:
+            if (
+                self.__reflectance_image is not None
+                and self.__vc_g == vc_g
+                and (self.__reflectance_irradiance == irradiance or irradiance is None)
+            ):
+                # DO NOT recompute if:
+                # 1) ``self.__reflectance_image`` exists, and
+                # 2) ``self.__vc_g`` equals user-specified ``vc_g``
+                # 3) ``self.__reflectance_irradiance`` == user specified ``irradiance``
+                #    or the input irradiance is None
+                return self.__reflectance_image
 
-        if undistort:
-            return self.raw() > 64880
+        rad_kw = {"which_dc": which_dc.lower(), "vc_g": vc_g}
+
+        if self.band_name != "LWIR":
+            if irradiance is None:
+                # User has not provided an irradiance value - get the
+                # DLS2 irradiance value (if it exists)
+                if self.horizontal_irradiance != 0.0:
+                    irradiance = self.horizontal_irradiance
+                    # self.__reflectance_irradiance remains None - is this for a reason?
+                else:
+                    raise ValueError(
+                        "horizontal irradiance value is 0.0 - please provide "
+                        "a band-specific spectral irradiance to compute reflectance"
+                    )
+            else:
+                # Apply the user-specified irradiance value
+                self.__reflectance_irradiance = irradiance
+
+            # print(f"irradiance at {self.center_wavelength}: {irradiance}")
+            # compute the Reflectance or Remote sensing reflectance
+            if return_rrs:
+                self.__reflectance_image = self.radiance(**rad_kw) / irradiance
+            else:
+                self.__reflectance_image = math.pi * self.radiance(**rad_kw) / irradiance
         else:
-            return self.undistorted(image=self.raw()) > 64880
+            # Return the LongWave IR radiance image as-is
+            self.__reflectance_image = self.radiance(**rad_kw)
+
+        return self.__reflectance_image
 
     def undistorted_radiance(
         self,
         force_recompute: bool = False,
-        use_darkpixels: bool = True,
+        which_dc: str = "dark",
         vc_g: float = 1.0,
     ) -> np.ndarray:
         return self.undistorted(
-            self.radiance(
-                force_recompute=force_recompute, use_darkpixels=use_darkpixels, vc_g=vc_g
-            )
+            self.radiance(force_recompute=force_recompute, which_dc=which_dc, vc_g=vc_g)
         )
 
     def undistorted_reflectance(
@@ -658,14 +866,14 @@ class Image(object):
         irradiance: Optional[float] = None,
         vc_g: float = 1.0,
         force_recompute: bool = False,
-        use_darkpixels: bool = True,
+        which_dc: str = "dark",
         return_rrs: bool = False,
     ) -> np.ndarray:
         return self.undistorted(
             self.reflectance(
                 irradiance=irradiance,
                 force_recompute=force_recompute,
-                use_darkpixels=use_darkpixels,
+                which_dc=which_dc,
                 vc_g=vc_g,
                 return_rrs=return_rrs,
             )

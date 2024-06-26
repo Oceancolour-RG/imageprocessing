@@ -17,7 +17,7 @@ def uav_hedley_wrapper(
     hedley_oyaml: Path,
     vcg_md: Optional[dict] = None,
     ed_md: Optional[dict] = None,
-    use_darkpixels: bool = True,
+    which_dc: str = "dark",
     pixels: Optional[List[int]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """
@@ -52,8 +52,17 @@ def uav_hedley_wrapper(
         }
         If `ed_md` is None, then the DLS2 data automatically loaded.
 
-    use_darkpixels : bool
-        Whether to use the dark pixels
+    which_dc : str
+        Whether to use the `dark_pixels` ("dark"), `black_level` ("black"), or
+        `user_defined` ("user")
+        Note:
+        `black_level` has a temporally constant value of 4800 across all bands.
+        This is unrealistic as the dark current increases with sensor temperature.
+        `dark_pixels` the averaged DN of the optically covered pixel values. This
+        value is different for each band and varies across an acquisition, presu-
+        mably from increases in temperature.
+        `user_defined` temperature invariant value acquired through a dark
+        current assessment
 
     pixels : List[int]  [Optional]
         Pixel index locations with the format of:
@@ -103,7 +112,7 @@ def uav_hedley_wrapper(
         "warp_mode": 3,  # cv2.MOTION_HOMOGRAPHY = 3
         "irradiance": irrad,
         "vc_g": vc_g,
-        "use_darkpixels": use_darkpixels,
+        "which_dc": which_dc,
         "crop_edges": False,
     }
 

@@ -594,7 +594,7 @@ def aligned_capture_backend(
     crop_edges: bool = True,
     irradiance: Optional[List[float]] = None,
     vc_g: Optional[List[float]] = None,
-    use_darkpixels: bool = True,
+    which_dc: str = "dark",
 ) -> np.ndarray:
     """
 
@@ -622,21 +622,23 @@ def aligned_capture_backend(
         Irradiance spectrum (band-ordered not wavelength-ordered) or None
     vc_g : List[float] or None
         Vicarious calibration gains (band-ordered not wavelength-ordered) or None
-    use_darkpixels : bool
-        Whether to use the `dark_pixels` (True) or `black_level` (False).
+    which_dc : str
+        Whether to use the `dark_pixels` ("dark"), `black_level` ("black"), or
+        `user_defined` ("user")
         Note:
         `black_level` has a temporally constant value of 4800 across all bands.
         This is unrealistic as the dark current increases with sensor temperature.
         `dark_pixels` the averaged DN of the optically covered pixel values. This
         value is different for each band and varies across an acquisition, presu-
         mably from increases in temperature.
-
+       `user_defined` temperature invariant value acquired through a dark
+        current assessment
     """
     width, height = ms_capture.images[0].size()
 
     im_aligned = np.zeros((height, width, len(warp_matrices)), dtype="float32")
 
-    rkw = {"use_darkpixels": use_darkpixels, "force_recompute": True}
+    rkw = {"which_dc": which_dc, "force_recompute": True}
     for i in range(0, len(warp_matrices)):
         rkw.update({"vc_g": 1 if vc_g is None else vc_g[i]})  # vicarious gains
 
@@ -692,7 +694,7 @@ def aligned_capture(
     crop_edges: bool = True,
     irradiance: Optional[List[float]] = None,
     vc_g: Optional[List[float]] = None,
-    use_darkpixels: bool = True,
+    which_dc: str = "dark",
 ) -> np.ndarray:
     """
     Creates aligned Capture. Computes undistorted radiance
@@ -720,15 +722,17 @@ def aligned_capture(
         Irradiance spectrum (band-ordered not wavelength-ordered) or None
     vc_g : List[float] or None
         Vicarious calibration gains (band-ordered not wavelength-ordered) or None
-    use_darkpixels : bool
-        Whether to use the `dark_pixels` (True) or `black_level` (False).
+    which_dc : str
+        Whether to use the `dark_pixels` ("dark"), `black_level` ("black"), or
+        `user_defined` ("user")
         Note:
         `black_level` has a temporally constant value of 4800 across all bands.
         This is unrealistic as the dark current increases with sensor temperature.
         `dark_pixels` the averaged DN of the optically covered pixel values. This
         value is different for each band and varies across an acquisition, presu-
         mably from increases in temperature.
-
+       `user_defined` temperature invariant value acquired through a dark
+        current assessment
 
     Returns
     -------
@@ -760,7 +764,7 @@ def aligned_capture(
         crop_edges=crop_edges,
         irradiance=irradiance,
         vc_g=vc_g,
-        use_darkpixels=use_darkpixels,
+        which_dc=which_dc,
     )
 
     return im_aligned

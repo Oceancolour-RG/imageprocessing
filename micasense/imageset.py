@@ -103,8 +103,8 @@ def save_capture(params: dict, ms_capture: Capture):
             )
         else:
             print(
-                f"\tCapture {cap.uuid} only has {len(cap.images)} Images. Should have "
-                f"{params['capture_len']}. Skipping..."
+                f"\tCapture {ms_capture.uuid} only has {len(ms_capture.images)} Images."
+                f"Should have {params['capture_len']}. Skipping..."
             )
             return
 
@@ -114,7 +114,7 @@ def save_capture(params: dict, ms_capture: Capture):
             )
             if params["overwrite"] or not os.path.exists(output_stack_file_path):
                 save_capture_as_stack(
-                    capture=cap,
+                    capture=ms_capture,
                     im_aligned=im_aligned,
                     out_filename=output_stack_file_path,
                 )

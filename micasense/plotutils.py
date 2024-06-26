@@ -92,7 +92,7 @@ def subplotwithcolorbar(
     titles: Optional[List[str]] = None,
     figsize: Optional[Iterable[float]] = None,
     vrange: Optional[Iterable[float]] = None,
-    show: bool=False,
+    show: bool = False,
 ) -> Tuple[Figure, np.ndarray]:
     """
     Plot a set of images in subplots

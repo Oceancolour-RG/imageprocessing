@@ -397,6 +397,24 @@ class Capture(object):
         """
         return self.images[0].dls_yaw, self.images[0].dls_pitch, self.images[0].dls_roll
 
+    def eo_images(self) -> List[np.ndarray]:
+        """Returns a list of the EO Images in the Capture."""
+        return [img for img in self.images if img.band_name != "LWIR"]
+
+    def lw_images(self) -> List[np.ndarray]:
+        """Returns a list of the longwave infrared Images in the Capture."""
+        return [img for img in self.images if img.band_name == "LWIR"]
+
+    def eo_indices(self) -> List[int]:
+        """Returns a list of the indexes of the EO Images in the Capture."""
+        return [index for index, img in enumerate(self.images) if img.band_name != "LWIR"]
+
+    def lw_indices(self) -> List[int]:
+        """
+        Returns a list of the indexes of the longwave infrared Images in the Capture
+        """
+        return [index for index, img in enumerate(self.images) if img.band_name == "LWIR"]
+
     def plot_raw(self):
         """Plot raw images as the data came from the camera."""
         self.__plot([img.raw() for img in self.images], title="Raw", show=True)
@@ -513,7 +531,7 @@ class Capture(object):
         self,
         vc_g: Optional[List[float]] = None,
         force_recompute: bool = True,
-        use_darkpixels: bool = True,
+        which_dc: str = "dark",
     ) -> None:
         """Compute Image radiances"""
         vcg_ = [1] * len(self.images) if vc_g is None else vc_g
@@ -521,7 +539,7 @@ class Capture(object):
             img.radiance(
                 vc_g=vcg_[i],
                 force_recompute=force_recompute,
-                use_darkpixels=use_darkpixels,
+                which_dc=which_dc,
             )
             for i, img in enumerate(self.images)
         ]
@@ -530,7 +548,7 @@ class Capture(object):
         self,
         vc_g: Optional[List[float]] = None,
         force_recompute=True,
-        use_darkpixels: bool = True,
+        which_dc: str = "dark",
     ) -> None:
         """Compute Image undistorted radiance."""
         vcg_ = [1] * len(self.images) if vc_g is None else vc_g
@@ -539,7 +557,7 @@ class Capture(object):
             img.undistorted_radiance(
                 vc_g=vcg_[i],
                 force_recompute=force_recompute,
-                use_darkpixels=use_darkpixels,
+                which_dc=which_dc,
             )
             for i, img in enumerate(self.images)
         ]
@@ -549,7 +567,7 @@ class Capture(object):
         irradiance: Optional[List[float]] = None,
         vc_g: Optional[List[None]] = None,
         force_recompute: bool = True,
-        use_darkpixels: bool = True,
+        which_dc: str = "dark",
     ) -> None:
         """
         Compute Image reflectance from irradiance list, but don't return.
@@ -567,14 +585,17 @@ class Capture(object):
         force_recompute: bool
             Specifies whether reflectance is to be recomputed.
 
-        use_darkpixels : bool
-            Whether to use the `dark_pixels` (True) or `black_level` (False).
+        which_dc : str
+            Whether to use the `dark_pixels` ("dark"), `black_level` ("black"), or
+            `user_defined` ("user")
             Note:
             `black_level` has a temporally constant value of 4800 across all bands.
             This is unrealistic as the dark current increases with sensor temperature.
             `dark_pixels` the averaged DN of the optically covered pixel values. This
             value is different for each band and varies across an acquisition, presu-
             mably from increases in temperature.
+            `user_defined` temperature invariant value acquired through a dark
+            current assessment
 
         Returns
         -------
@@ -588,7 +609,7 @@ class Capture(object):
                 irradiance=ed_[i],
                 vc_g=vcg_[i],
                 force_recompute=force_recompute,
-                use_darkpixels=use_darkpixels,
+                which_dc=which_dc,
             )
             for i, img in enumerate(self.images)
         ]
@@ -598,7 +619,7 @@ class Capture(object):
         irradiance: Optional[List[float]] = None,
         vc_g: Optional[List[float]] = None,
         force_recompute: bool = True,
-        use_darkpixels: bool = True,
+        which_dc: str = "dark",
     ) -> None:
         """
         Compute undistorted image reflectance from irradiance list.
@@ -616,14 +637,17 @@ class Capture(object):
         force_recompute: bool
            Specifies whether reflectance is to be recomputed.
 
-        use_darkpixels : bool
-            Whether to use the `dark_pixels` (True) or `black_level` (False).
+        which_dc : str
+            Whether to use the `dark_pixels` ("dark"), `black_level` ("black"), or
+            `user_defined` ("user")
             Note:
             `black_level` has a temporally constant value of 4800 across all bands.
             This is unrealistic as the dark current increases with sensor temperature.
             `dark_pixels` the averaged DN of the optically covered pixel values. This
             value is different for each band and varies across an acquisition, presu-
             mably from increases in temperature.
+            `user_defined` temperature invariant value acquired through a dark
+            current assessment
 
         Returns
         -------
@@ -637,31 +661,16 @@ class Capture(object):
                 irradiance=ed_[i],
                 vc_g=vcg_[i],
                 force_recompute=force_recompute,
-                use_darkpixels=use_darkpixels,
+                which_dc=which_dc,
             )
             for i, img in enumerate(self.images)
         ]
 
-    def eo_images(self) -> List[np.ndarray]:
-        """Returns a list of the EO Images in the Capture."""
-        return [img for img in self.images if img.band_name != "LWIR"]
-
-    def lw_images(self) -> List[np.ndarray]:
-        """Returns a list of the longwave infrared Images in the Capture."""
-        return [img for img in self.images if img.band_name == "LWIR"]
-
-    def eo_indices(self) -> List[int]:
-        """Returns a list of the indexes of the EO Images in the Capture."""
-        return [index for index, img in enumerate(self.images) if img.band_name != "LWIR"]
-
-    def lw_indices(self) -> List[int]:
-        """
-        Returns a list of the indexes of the longwave infrared Images in the Capture
-        """
-        return [index for index, img in enumerate(self.images) if img.band_name == "LWIR"]
-
     def reflectance(
-        self, irradiance: List[float], vc_g: List[float], use_darkpixels: bool = True
+        self,
+        irradiance: List[float],
+        vc_g: List[float],
+        which_dc: str = "dark",
     ) -> List[np.ndarray]:
         """
         Compute reflectance Images.
@@ -676,34 +685,38 @@ class Capture(object):
         vc_g : List[float]
             A list of vicarious calibration gains
 
-        use_darkpixels : bool
-            Whether to use the `dark_pixels` (True) or `black_level` (False).
+        which_dc : str
+            Whether to use the `dark_pixels` ("dark"), `black_level` ("black"), or
+            `user_defined` ("user")
             Note:
             `black_level` has a temporally constant value of 4800 across all bands.
             This is unrealistic as the dark current increases with sensor temperature.
             `dark_pixels` the averaged DN of the optically covered pixel values. This
             value is different for each band and varies across an acquisition, presu-
             mably from increases in temperature.
+            `user_defined` temperature invariant value acquired through a dark
+            current assessment
 
         Returns
         -------
         List of reflectance EO and long wave infrared Images for given irradiance.
         """
         eo_imgs = [
-            img.reflectance(
-                irradiance=irradiance[i], vc_g=vc_g[i], use_darkpixels=use_darkpixels
-            )
+            img.reflectance(irradiance=irradiance[i], vc_g=vc_g[i], which_dc=which_dc)
             for i, img in enumerate(self.eo_images())
         ]
         lw_imgs = [  # Note that `lw_imgs` are radiance images
-            img.reflectance(vc_g=vc_g[i], use_darkpixels=use_darkpixels)
+            img.reflectance(vc_g=vc_g[i], which_dc=which_dc)
             for i, img in enumerate(self.lw_images())
         ]
 
         return eo_imgs + lw_imgs  # append `lw_imgs` to `eo_imgs`
 
     def undistorted_reflectance(
-        self, irradiance: List[float], vc_g: List[float], use_darkpixels: bool = True
+        self,
+        irradiance: List[float],
+        vc_g: List[float],
+        which_dc: str = "dark",
     ) -> List[np.ndarray]:
         """
         Compute undistorted reflectance Images.
@@ -718,14 +731,17 @@ class Capture(object):
         vc_g : List[float] or None
             A list of vicarious calibration gains
 
-        use_darkpixels : bool
-            Whether to use the `dark_pixels` (True) or `black_level` (False).
+        which_dc : str
+            Whether to use the `dark_pixels` ("dark"), `black_level` ("black"), or
+            `user_defined` ("user")
             Note:
             `black_level` has a temporally constant value of 4800 across all bands.
             This is unrealistic as the dark current increases with sensor temperature.
             `dark_pixels` the averaged DN of the optically covered pixel values. This
             value is different for each band and varies across an acquisition, presu-
             mably from increases in temperature.
+            `user_defined` temperature invariant value acquired through a dark
+            current assessment
 
         Returns
         -------
@@ -733,15 +749,13 @@ class Capture(object):
         """
         eo_imgs = [
             img.undistorted(
-                img.reflectance(
-                    irradiance=irradiance[i], vc_g=vc_g[i], use_darkpixels=use_darkpixels
-                )
+                img.reflectance(irradiance=irradiance[i], vc_g=vc_g[i], which_dc=which_dc)
             )
             for i, img in enumerate(self.eo_images())
         ]
 
         lw_imgs = [  # Note that `lw_imgs` are radiance images
-            img.undistorted(img.reflectance(vc_g=vc_g[i], use_darkpixels=use_darkpixels))
+            img.undistorted(img.reflectance(vc_g=vc_g[i], which_dc=which_dc))
             for i, img in enumerate(self.lw_images())
         ]
         return eo_imgs + lw_imgs  # append `lw_imgs` to `eo_imgs`
@@ -845,9 +859,7 @@ class Capture(object):
         if self.panels is None:
             if not self.panels_in_all_expected_images():
                 raise IOError("Panels not detected in all images.")
-        self.__plot(
-            [p.plot_image() for p in self.panels], title="Panels", cbar=False
-        )
+        self.__plot([p.plot_image() for p in self.panels], title="Panels", cbar=False)
 
     def set_external_rig_relatives(self, external_rig_relatives) -> None:
         """

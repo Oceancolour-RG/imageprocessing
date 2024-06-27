@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Optional, Union
 
 
-def load_yaml(yaml_file: Union[Path, str], key: Optional[str] = None) -> Union[dict, None]:
+def load_yaml(
+    yaml_file: Union[Path, str], key: Optional[str] = None
+) -> Union[dict, None]:
     # open the yaml file
     val = None
     with open(yaml_file, "r") as fid:

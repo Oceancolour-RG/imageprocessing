@@ -39,7 +39,7 @@ from typing import Union, List, Tuple, Optional, Iterable
 
 from micasense.tags import add_exif
 from micasense.capture import Capture
-from micasense.load_yaml import load_all
+from micasense.yaml_handler import load_yaml
 from micasense.plotutils import plotwithcolorbar, plot_overlay_withcolorbar
 
 
@@ -1229,7 +1229,7 @@ def save_capture_as_stack(
 
     if yml_fn:
         add_exif(
-            acq_meta=load_all(yml_fn),
+            acq_meta=load_yaml(yml_fn),
             tiff_fn=out_filename,
             compression=EXIF_COMP[ocomp],
             imshape=(nrows, ncols),
@@ -1346,7 +1346,7 @@ def save_aligned_individual(
 
         if yml_fn:
             add_exif(
-                acq_meta=load_all(yml_fn),
+                acq_meta=load_yaml(yml_fn),
                 tiff_fn=ofn,
                 compression=EXIF_COMP[ocomp],
                 imshape=(nrows, ncols),

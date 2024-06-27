@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 
 import pytz
-import yaml
 import pyexiv2
 
 from pathlib import Path
 from packaging import version
+from yaml import dump as ydump
 from numpy import array, argsort
 from typing import List, Tuple, Union, Optional
 from datetime import datetime, timedelta
 
+from .checks import check_cam_vg, check_cam_dc, check_camera
 from pprint import pprint  # noqa
 
 
@@ -297,15 +298,32 @@ def get_panel_serial(
 
 
 def band_dict_from_file(
-    f: Path,
-) -> Tuple[
-    Union[dict, None],
-    Union[dict, None],
-    Union[float, None],
-    Union[float, None],
-    Union[float, None],
-]:
-    """Extract EXIF, XMP metadata from image file & return as a dict"""
+    f: Path, vig_param: Optional[dict] = None, dc_param: Optional[dict] = None
+) -> Tuple[Union[dict, None], Union[dict, None], Union[dict, None]]:
+    """
+    Extract EXIF, XMP metadata from image file & return as a dict
+
+    Parameters
+    ----------
+    f : Path
+        image filename
+
+    vig_param : dict [Optional]
+        vignetting parameters specific for the image file `f`. This
+        dictionary should contain the vignetting centre and polynomial
+        coefficients, as in,
+        {
+            "vignette_center": [float, float],  # x, y
+            "vignette_polynomial": List[float],  # vignetting polynomials
+        }
+
+    dc_param : dict [Optional]
+        Black level value specific for the image file `f`. This dictionary
+        should contain the 'blacklevel', as in,
+        {
+            "blacklevel": float or int
+        }
+    """
 
     def str_or_none(
         key: str, md_keys: List[str], md: pyexiv2.metadata.ImageMetadata
@@ -348,6 +366,12 @@ def band_dict_from_file(
         camera_model = md["Exif.Image.Model"].value
         lat, lon, alt = get_dls2_position(**kw)
 
+        bps = float(md["Exif.Image.BitsPerSample"].value)
+        fp_xres = float(md["Exif.Photo.FocalPlaneXResolution"].value)
+        fp_yres = float(md["Exif.Photo.FocalPlaneYResolution"].value)
+
+        other_dict = {"bps": bps, "fp_xres": fp_xres, "fp_yres": fp_yres}
+
         misc_dict = {
             "dls_serialnum": str_or_none("Xmp.DLS.Serial", **kw),
             "dls_yaw": float_or_zero("Xmp.DLS.Yaw", **kw),  # radians
@@ -374,9 +398,6 @@ def band_dict_from_file(
                 int(md["Exif.Image.ImageLength"].value),
             ],
         }
-        bps = float(md["Exif.Image.BitsPerSample"].value)
-        fp_xres = float(md["Exif.Photo.FocalPlaneXResolution"].value)
-        fp_yres = float(md["Exif.Photo.FocalPlaneYResolution"].value)
 
         md_dict = {
             "panel_albedo": panel_albedo,
@@ -421,10 +442,24 @@ def band_dict_from_file(
                 md_keys, firmware_version, camera_model
             ),
         }
-    else:
-        md_dict, misc_dict, bps, fp_xres, fp_yres = None, None, None, None, None
 
-    return md_dict, misc_dict, bps, fp_xres, fp_yres
+        # Add new vignetting coefficients here
+        if vig_param:  # `vig_param` has already been checked and verified
+            md_dict["vignette_xy_original"] = md_dict["vignette_xy"]
+            md_dict["vignette_poly_original"] = md_dict["vignette_poly"]
+
+            md_dict["vignette_xy"] = vig_param["vignette_center"]
+            md_dict["vignette_poly"] = vig_param["vignette_polynomial"]
+
+        # add new blacklevel value here
+        if dc_param:  # `dc_param` has already been checked and verified
+            md_dict["blacklevel_original"] = md_dict["blacklevel"]
+            md_dict["blacklevel"] = dc_param["blacklevel"]
+
+    else:
+        md_dict, misc_dict, other_dict = None, None, None
+
+    return md_dict, misc_dict, other_dict
 
 
 def get_syncxxxxset_folders(mpath: Path) -> Tuple[List[str], List[str]]:
@@ -522,6 +557,9 @@ def get_dls2_ed(md_dict: dict) -> Tuple[List[float], List[float], str]:
 def create_img_acqi_yamls(
     dpath: Union[Path, str],
     opath: Optional[Union[Path, str]] = None,
+    vig_params: Optional[dict] = None,
+    dc_params: Optional[dict] = None,
+    camera: str = "dualcamera",
 ) -> None:
     """
     Create a yaml file for each image acquisition containing the
@@ -540,9 +578,51 @@ def create_img_acqi_yamls(
         then a folder named "metadata" will be created within the
         specified `dpath` folder.
 
+    vig_params : dict [Optional]
+        User defined vignetting parameters that will overwrite the
+        default parameters. This dictionary must have the following keys
+        {
+            1: {  # band number
+                "vignette_center": [float, float],  # x, y
+                "vignette_polynomial": List[float],  # vignetting polynomials
+            },
+            ...,
+            X: {  # band number
+            }
+        }
+        Where X is the band number (1-5 for RedEdge-MX or 1-10 for Dual Camera)
+
+        The vignetting polynomials must have six values for the model as in,
+        https://support.micasense.com/hc/en-us/articles/
+           115000351194-Radiometric-Calibration-Model-for-MicaSense-Sensors
+
+    dc_params : dict [Optional]
+        User defined dark current values that will overwrite the
+        default 'blacklevel' values. This dictionary must have the following keys,
+        {
+            1: {  # band number
+                "blacklevel": float or int
+            },
+            ...,
+            X: {  # band number
+                "blacklevel": float or int
+            }
+        }
+
+        The values of 'blacklevel' must be greater than 0 and less than
+        the maximum DN value
+
+    camera : str
+         Micasense camera acquisition (DualCamera, RedEdge-MX, RedEdge-MX-Blue).
+
     Notes
     -----
-    ** Each yaml file contains the following metadata:
+    1) if `vig_params` or `dark_current` are provided, then the
+       default values are stored with a key that ends in "_original",
+       e.g. "vignette_xy_original", "vignette_poly_original",
+            "blacklevel_original"
+
+    2) Each yaml file contains the following metadata:
        yaml_dict = {
            "base_path": "/path/to/somewhere/micasense"
            "band_1": {
@@ -550,10 +630,10 @@ def create_img_acqi_yamls(
                "band"
            }
        }
-    ** The absolute path of "file" can be recovered by:
+    3) The absolute path of "file" can be recovered by:
        fn = Path(base_path) / file
 
-    ** This code assumes that the IMG_XXXX_*.tif files have been
+    4) This code assumes that the IMG_XXXX_*.tif files have been
        moved from their native 000/, 001/, ... folders directly
        into the SYNCXXXXSET folder, e.g.
        red_cam/
@@ -599,12 +679,20 @@ def create_img_acqi_yamls(
         else:
             md_dict[f"{fkey}"] = None
 
-    # ensure dpath is a Path object
-    dpath = Path(dpath) if isinstance(dpath, str) else dpath
+    # ensure `dpath` is a Path object
+    dpath = Path(dpath)
 
     if opath:
-        o_ypath = Path(opath) if isinstance(opath, str) else opath
+        o_ypath = Path(opath)  # ensure `opath` is a Path object
         o_ypath.mkdir(exist_ok=True)
+
+    # check `camera`
+    check_camera(camera)
+
+    # check `vig_params` and `darkcurrent`
+    check_cam_vg(cam_vig_params=vig_params, camera=camera)
+    check_cam_dc(cam_dc_params=dc_params, bits_per_pixel=16, camera=camera)
+    # FIXME: don't hardcode `bits_per_pixel` here
 
     # 1) The "SYNCXXXXSET" sub-directories in the "red_cam" folder
     #    should match those in the "blue_cam" directory. Thus, get
@@ -644,7 +732,13 @@ def create_img_acqi_yamls(
             valid = True if len(tifs) == 10 else False
             bps_ls, fp_xres_ls, fp_yres_ls = [], [], []
             for f in tifs:
-                band_dict, misc_dict, bps, fp_xres, fp_yres = band_dict_from_file(f)
+                print(f, get_bandnum(f))
+                # band_dict, misc_dict, bps, fp_xres, fp_yres = band_dict_from_file(
+                band_dict, misc_dict, other_dict = band_dict_from_file(
+                    f=f,
+                    vig_param=vig_params[get_bandnum(f)] if vig_params else None,
+                    dc_param=dc_params[get_bandnum(f)] if dc_params else None,
+                )
                 # bname = f"band_{get_bandnum(f):02d}"  # e.g. "band_01" -> "band_10"
                 bname = f.name  # e.g. "IMG_0000_1.tif"
                 md_dict["image_data"][bname] = band_dict
@@ -662,9 +756,9 @@ def create_img_acqi_yamls(
                     done = True
 
                 # unsure if bps, fp_xres or fp_yres are band-dependent
-                bps_ls.append(bps) if bps else None
-                fp_xres_ls.append(fp_xres) if fp_xres else None
-                fp_yres_ls.append(fp_yres) if fp_yres else None
+                bps_ls.append(other_dict["bps"] if other_dict else None)
+                fp_xres_ls.append(other_dict["fp_xres"] if other_dict else None)
+                fp_yres_ls.append(other_dict["fp_yres"] if other_dict else None)
 
             # append the unique values of bps, fp_xres and fp_yres
             add2dict(md_dict, "bits_persample", list(set(bps_ls)))
@@ -693,6 +787,6 @@ def create_img_acqi_yamls(
             # write to yaml
             yaml_ofile = o_ypath / f"IMG_{acq}.yaml"
             with open(yaml_ofile, "w") as fid:
-                yaml.dump(md_dict, fid, default_flow_style=False)
+                ydump(md_dict, fid, default_flow_style=False)
 
     return

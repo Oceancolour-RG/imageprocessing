@@ -28,10 +28,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from matplotlib.pylab import cm
-from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from typing import Optional, List, Iterable, Tuple, Union
+from typing import Optional, List, Iterable, Tuple
 
 from micasense.checks import check_vrange
 

@@ -38,7 +38,7 @@ from typing import Union, List, Optional, Tuple, Iterable
 
 from .image import Image
 from .panel import Panel
-from .load_yaml import load_all
+from .yaml_handler import load_yaml
 from .plotutils import subplotwithcolorbar
 
 
@@ -198,7 +198,7 @@ class Capture(object):
         -------
         Capture object.
         """
-        d = load_all(yaml_file=yaml_file)
+        d = load_yaml(yaml_file=yaml_file)
         if base_path is None:
             base_path = Path(d["base_path"])
         else:  # Path or str

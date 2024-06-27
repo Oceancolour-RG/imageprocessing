@@ -14,7 +14,7 @@ from xarray import Dataset, DataArray
 from typing import Optional, Union, List, Tuple
 from datetime import datetime, timedelta, timezone
 
-import micasense.load_yaml as ms_yaml
+from micasense.yaml_handler import load_yaml, add_ppk_to_yaml
 
 
 def plot_histograms_frate(
@@ -306,7 +306,7 @@ def get_micasense_timestamps(tifs: List[Path]) -> Tuple[np.ndarray, np.ndarray]:
     valid_mse_ix = []
 
     for ms_ix, f in enumerate(tifs):
-        ms_time = ms_yaml.load_all(yaml_file=f, key="dls_utctime")  # None or datetime
+        ms_time = load_yaml(yaml_file=f, key="dls_utctime")  # None or datetime
         if ms_time is None:
             valid_mse_ix.append(False)
             ms_dt.append(np.nan)
@@ -683,7 +683,7 @@ def append_reach2yaml(
         return
 
     for m_, r_ in zip(mse_ix, trg_ix):
-        ms_yaml.add_ppk_to_yaml(
+        add_ppk_to_yaml(
             yml_f=tifs[m_],
             ppk_lat=float(lat[r_]),
             ppk_lon=float(lon[r_]),

@@ -30,12 +30,12 @@ import cv2
 import math
 import numpy as np
 
-import micasense.load_yaml as ms_yaml
 import micasense.plotutils as plotutils
 import micasense.metadata2 as metadata
 
 # import micasense.metadata as metadata
 import micasense.dls as dls
+from micasense.yaml_handler import load_yaml
 from micasense.checks import check_dc, check_vigparms
 
 from os.path import isfile
@@ -124,7 +124,7 @@ class Image(object):
             # specified so that metadata_dict can be loaded.
             if yaml_path and isfile(yaml_path):
                 # load yaml as metadata_dict
-                metadata_dict = ms_yaml.load_all(yaml_file=yaml_path)
+                metadata_dict = load_yaml(yaml_file=yaml_path)
 
         self.path = image_path
         if metadata_dict is None:

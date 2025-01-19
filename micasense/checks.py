@@ -1,4 +1,6 @@
-from typing import Union, Tuple, Iterable
+#!/usr/bin/env python3
+import numpy as np
+from typing import Union, Tuple, Iterable, Optional
 
 
 def __check_bands_in_dict(d: dict, dname: str, camera: str = "dualcamera") -> None:
@@ -133,7 +135,7 @@ def check_cam_dc(
     return
 
 
-def check_vigparms(vig_params: Union[dict, None], order: int = 6) -> None:
+def check_vigparms(vig_params: Union[dict, None], order: Optional[int] = None) -> None:
     """
     check the user-specified vignetting parameters. This function is
     primarily used in the image.Image class
@@ -149,8 +151,9 @@ def check_vigparms(vig_params: Union[dict, None], order: int = 6) -> None:
         Here, the 'vignette_polynomial' must be an Iterable
         with n-order of elements
 
-    order : int [default = 6]
-        Polynomial order of vignetting model
+    order : int or None
+        Polynomial order of vignetting model. If None, then any polynomial
+        order is accepted
     """
 
     def _checknum(v: float) -> bool:
@@ -185,10 +188,15 @@ def check_vigparms(vig_params: Union[dict, None], order: int = 6) -> None:
         else:
             tmp2 = vig_params["vignette_polynomial"]
             err2 = err.format(
-                "vig_params['vignette_polynomial']", f"{order} numeric", tmp2
+                "vig_params['vignette_polynomial']",
+                f"{order} numeric" if order is not None else "numeric",
+                tmp2,
             )
             if isinstance(tmp2, Iterable):
-                if (len(tmp2) != order) or (not all([_checknum(v) for v in tmp2])):
+                if order is not None:
+                    if len(tmp2) != order:
+                        raise ValueError(err2)
+                if not all([_checknum(v) for v in tmp2]):
                     # check if vignette_polynomial has {order} numeric elements
                     raise ValueError(err2)
             else:
@@ -198,7 +206,11 @@ def check_vigparms(vig_params: Union[dict, None], order: int = 6) -> None:
     return
 
 
-def check_cam_vg(cam_vig_params: Union[dict, None], camera: str = "dualcamera") -> None:
+def check_cam_vg(
+    cam_vig_params: Union[dict, None],
+    order: Optional[int] = None,
+    camera: str = "dualcamera",
+) -> None:
     """
     Check the vignetting parameters for each band in the camera. This function
     is used in acquisition_yamls.create_img_acqi_yamls
@@ -224,6 +236,10 @@ def check_cam_vg(cam_vig_params: Union[dict, None], camera: str = "dualcamera") 
             https://support.micasense.com/hc/en-us/articles/
                115000351194-Radiometric-Calibration-Model-for-MicaSense-Sensors
 
+    order : int or None
+        Polynomial order of vignetting model. If None, then any polynomial
+        order is accepted
+
     camera : str
          Micasense camera (DualCamera, RedEdge-MX, RedEdge-MX-Blue).
 
@@ -235,6 +251,40 @@ def check_cam_vg(cam_vig_params: Union[dict, None], camera: str = "dualcamera") 
         __check_bands_in_dict(cam_vig_params, "cam_vig_params", camera)
 
         for b in cam_vig_params:
-            check_vigparms(vig_params=cam_vig_params[b], order=6)
+            check_vigparms(vig_params=cam_vig_params[b], order=order)
 
+    return
+
+
+def check_vigimage(vig_image: Union[np.ndarray, None], shape: Tuple[int, int]) -> None:
+    """
+    Run the following checks on the vignette image
+    (a) `vig_image` is None or numpy.ndarray
+    (b) if numpy.ndarray that the dtype is "float32" or "float64"
+    (c) if numpy.ndarray that all pixel values > 0 (otherwise nan when
+        vignette_corr = 1.0 / vig_image
+    (d) image dimensions of `vig_image` match `shape`
+
+    Parameters
+    ----------
+    vig_image : numpy.ndarray or None
+        User-supplied vignetting image
+    shape : [int, int]
+        Expected image shape (nrows, ncols)
+    """
+    if isinstance(vig_image, np.ndarray):
+        vdn = vig_image.dtype.name
+        vsh = vig_image.shape
+
+        if "float" not in vdn:
+            raise ValueError(f"`vig_image` dtype ({vdn}) must be float32 or float64")
+        if vsh != tuple(shape):
+            raise ValueError(f"dimensions of `vig_image` {vsh} do not match {shape}")
+        if not np.all(vig_image > 0):
+            raise ValueError("All pixel values of `vig_image` must be > 0")
+    else:
+        if not isinstance(vig_image, type(None)):
+            raise TypeError(
+                f"`vig_image` (type={type(vig_image)}) must be None or numpy.ndarray"
+            )
     return

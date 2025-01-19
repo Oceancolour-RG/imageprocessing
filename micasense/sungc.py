@@ -18,6 +18,7 @@ def uav_hedley_wrapper(
     vcg_md: Optional[dict] = None,
     ed_md: Optional[dict] = None,
     which_dc: str = "dark",
+    vig_yaml: Optional[Path] = None,
     pixels: Optional[List[int]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """
@@ -64,6 +65,10 @@ def uav_hedley_wrapper(
         `user_defined` temperature invariant value acquired through a dark
         current assessment
 
+    vig_yaml : Path [Optional]
+        The yaml containing paths to vignetting images. If not specified,
+        the default vignetting model is used.
+
     pixels : List[int]  [Optional]
         Pixel index locations with the format of:
         [(row1, col1), (row2, col2), (row3, col3), ..., (rowN, colN)]
@@ -91,7 +96,10 @@ def uav_hedley_wrapper(
     warp_matrices = load_warp_matrices(warp_file=warp_npy_file)
 
     # 2) align reflectance image
-    img_capture = Capture.from_yaml(uav_yaml_file)
+    img_capture = Capture.from_yaml_special(  # load capture
+        yaml_file=uav_yaml_file, base_path=None, vig_yaml=vig_yaml
+    )
+
     wavel = np.array(img_capture.center_wavelengths())
 
     # Get the irradiance from `ed_md` if it was specified

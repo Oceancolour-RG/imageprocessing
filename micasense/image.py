@@ -36,7 +36,7 @@ import micasense.metadata2 as metadata
 # import micasense.metadata as metadata
 import micasense.dls as dls
 from micasense.yaml_handler import load_yaml
-from micasense.checks import check_dc, check_vigparms
+from micasense.checks import check_dc, check_vigparms, check_vigimage
 
 from os.path import isfile
 from pathlib import Path
@@ -71,6 +71,7 @@ class Image(object):
         yaml_path: Optional[Union[Path, str]] = None,
         metadata_dict: Optional[dict] = None,
         vig_params: Optional[dict] = None,
+        vig_image: Optional[np.ndarray] = None,
         dark_current: Optional[Union[float, int]] = None,
     ):
         """
@@ -100,6 +101,10 @@ class Image(object):
             for the model given in:
             https://support.micasense.com/hc/en-us/articles/
                115000351194-Radiometric-Calibration-Model-for-MicaSense-Sensors
+
+        vig_image : np.ndarray [Optional]
+            User defined vignetting image. `vig_image` is ignored if `vig_params`
+            are specified
 
         dark_current : float or int [Optional]
             User defined dark current value (must be greater than 0 and
@@ -175,7 +180,17 @@ class Image(object):
 
         # Get the user vignetting parameters (if provided)
         self.user_vig_params = vig_params  # dict or None
-        check_vigparms(self.user_vig_params)  # run checks
+        check_vigparms(self.user_vig_params, order=None)  # run checks
+
+        # ignore `vig_image` if `vig_params` have been specified
+        self.vig_image = None if self.user_vig_params else vig_image
+        check_vigimage(self.vig_image, shape=tuple(self.meta.image_size()[::-1]))
+
+        # at this point there are three cases:
+        # 1) user_vig_params is None and vig_image is None (use default)
+        # 2) user_vig_params is dict and vig_image is None (use new params)
+        # 3) user_vig_params is None and vig_image is np.ndarray (use vig_image)
+        # `self.vignette` will be executed only for cases (1) and (2)
 
         # ---------- lens calibration ---------- #
         self.distortion_parameters = self.meta.distortion_parameters()
@@ -448,6 +463,7 @@ class Image(object):
         else:
             # `self.user_vig_params` has already been checked in __init__()
             if self.user_vig_params:
+                print("vignette(): applying `user_vig_params`")
                 vignette_center_x = self.user_vig_params["vignette_center"][0]
                 vignette_center_y = self.user_vig_params["vignette_center"][1]
                 v_poly_list = self.user_vig_params["vignette_polynomial"].copy()
@@ -520,7 +536,10 @@ class Image(object):
         return dc
 
     def intensity(
-        self, force_recompute: bool = False, which_dc: str = "dark"
+        self,
+        force_recompute: bool = False,
+        which_dc: str = "dark",
+        apply_vig: bool = True,
     ) -> np.ndarray:
         """
         Computes and return the intensity image after black level, vignette,
@@ -558,19 +577,42 @@ class Image(object):
             self.radiometric_cal[1],
             self.radiometric_cal[2],
         )
-
-        # apply image correction methods to raw image
-
-        vig, x, y = self.vignette()
-        r_cal = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
-
-        lt_im = vig * r_cal * (image_raw - dc)
-        lt_im[lt_im < 0] = 0
-
+        g_ = self.gain
+        te_ = self.exposure_time
         max_raw_dn = float(2**self.bits_per_pixel)
-        intensity_image = lt_im.astype("float64") / (
-            self.gain * self.exposure_time * max_raw_dn
-        )
+
+        # apply image correction methods to raw image, see:
+        # https://support.micasense.com/hc/en-us/articles/
+        #    115000351194-Radiometric-Calibration-Model-for-MicaSense-Sensors
+        if apply_vig:  # apply vignetting
+            if self.vig_image is not None:
+                # `self.vig_image` (np.ndarray or None) has already been checked.
+                # It's expected that `vig_image` incorporates any row-gradient
+                # DN fall off (if present)
+                vig = 1.0 / self.vig_image.T  # transpose for consistency
+                rg_corr = 1.0
+
+            else:
+                # `self.user_vig_params` is a dict or None
+                vig, x, y = self.vignette()  # user-supplied or default
+                rg_corr = 1.0 / (1.0 + (a2 * y / te_) - a3 * y)
+                # `rg_corr` is the row-gradient DN fall-off correction, and
+                # increases linearly from 1.0, at the top of the image,
+                # to 1.5 (and sometimes up to 2.0) at the bottom of the image.
+
+                # NOTE: the default `rg_corr` is still applied even if the
+                #       user has supplied new vignetting parameters
+
+        else:
+            print("No vignetting")
+            vig = 1.0
+            rg_corr = 1.0
+
+        dc = self.select_dc(which_dc=which_dc.lower(), func_name="radiance")
+        normcorr_dn = (image_raw.astype("float64") - float(dc)) / max_raw_dn
+
+        intensity_image = vig * rg_corr * normcorr_dn / (g_ * te_)
+        intensity_image[intensity_image < 0] = 0
 
         self.__intensity_image = intensity_image.T
         return self.__intensity_image
@@ -631,30 +673,42 @@ class Image(object):
             te_ = self.exposure_time
             max_raw_dn = float(2**self.bits_per_pixel)
 
-            # apply image correction methods to raw image
-            vig, x, y = self.vignette()
-            dc = self.select_dc(which_dc=which_dc.lower(), func_name="radiance")
-
-            # original code (below - commented out) is hard to follow:
-            # r_cal = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
-            # lt_im = vig * r_cal * (image_raw - dc)
-            # lt_im[lt_im < 0] = 0
-
-            # radiance_image = (
-            #     lt_im.astype(float) / (self.gain * self.exposure_time) * a1 / max_raw_dn
-            # )
-
-            # new code following the equation of:
+            # apply image correction methods to raw image, see:
             # https://support.micasense.com/hc/en-us/articles/
             #    115000351194-Radiometric-Calibration-Model-for-MicaSense-Sensors
-            normcorr_dn = (image_raw.astype("float64") - float(dc)) / max_raw_dn
-            r_cal = a1 / (g_ * (te_ + (a2 * y) - (a3 * te_ * y)))  # float64
-
             if apply_vig:  # apply vignetting
-                radiance_image = vc_g * vig * r_cal * normcorr_dn
-            else:
-                radiance_image = vc_g * r_cal * normcorr_dn
+                if self.vig_image is not None:
+                    # `self.vig_image` (np.ndarray or None) has already been checked.
+                    # It's expected that `vig_image` incorporates any row-gradient
+                    # DN fall off (if present)
+                    # rg_corr = 1.0
 
+                    vig = 1.0 / self.vig_image.T  # transpose for consistency
+                    _, _, y = self.vignette()  # user-supplied or default
+                    rg_corr = 1.0 / (1.0 + (a2 * y / te_) - a3 * y)
+                    # print("    micasense.image: Using new vignetting")
+
+                else:
+                    # print("    micasense.image: using Default vignetting")
+                    # `self.user_vig_params` is a dict or None
+                    vig, x, y = self.vignette()  # user-supplied or default
+                    rg_corr = 1.0 / (1.0 + (a2 * y / te_) - a3 * y)
+                    # `rg_corr` is the row-gradient DN fall-off correction, and
+                    # increases linearly from 1.0, at the top of the image,
+                    # to 1.5 (and sometimes up to 2.0) at the bottom of the image.
+
+                    # NOTE: the default `rg_corr` is still applied even if the
+                    #       user has supplied new vignetting parameters
+
+            else:
+                print("No vignetting")
+                vig = 1.0
+                rg_corr = 1.0
+
+            dc = self.select_dc(which_dc=which_dc.lower(), func_name="radiance")
+            normcorr_dn = (image_raw.astype("float64") - float(dc)) / max_raw_dn
+
+            radiance_image = vc_g * vig * rg_corr * normcorr_dn * a1 / (g_ * te_)
             radiance_image[radiance_image < 0] = 0
 
         else:
@@ -671,6 +725,7 @@ class Image(object):
         force_recompute: bool = False,
         which_dc: str = "dark",
         vc_g: float = 1.0,
+        apply_vig: bool = True,
         return_rrs: bool = False,
     ) -> np.ndarray:
         """
@@ -702,6 +757,9 @@ class Image(object):
         vc_g : float
             Vicarious calibration gains to apply during radiance computation
 
+        apply_vig : bool
+            Whether to perform vignettig (True) or not (False)
+
         return_rrs : bool
             if True : returns remote sensing reflectance, Rrs, (units: 1/sr)
             if False: returns Reflectance (units: a.u.)
@@ -729,7 +787,12 @@ class Image(object):
                 #    or the input irradiance is None
                 return self.__reflectance_image
 
-        rad_kw = {"which_dc": which_dc.lower(), "vc_g": vc_g}
+        rad_kw = {
+            "which_dc": which_dc.lower(),
+            "vc_g": vc_g,
+            "apply_vig": apply_vig,
+            "force_recompute": force_recompute,
+        }
 
         if self.band_name != "LWIR":
             if irradiance is None:
@@ -764,9 +827,15 @@ class Image(object):
         force_recompute: bool = False,
         which_dc: str = "dark",
         vc_g: float = 1.0,
+        apply_vig: bool = True,
     ) -> np.ndarray:
         return self.undistorted(
-            self.radiance(force_recompute=force_recompute, which_dc=which_dc, vc_g=vc_g)
+            self.radiance(
+                force_recompute=force_recompute,
+                which_dc=which_dc,
+                vc_g=vc_g,
+                apply_vig=apply_vig,
+            )
         )
 
     def undistorted_reflectance(
@@ -776,6 +845,7 @@ class Image(object):
         force_recompute: bool = False,
         which_dc: str = "dark",
         return_rrs: bool = False,
+        apply_vig: bool = True,
     ) -> np.ndarray:
         return self.undistorted(
             self.reflectance(
@@ -783,6 +853,7 @@ class Image(object):
                 force_recompute=force_recompute,
                 which_dc=which_dc,
                 vc_g=vc_g,
+                apply_vig=apply_vig,
                 return_rrs=return_rrs,
             )
         )

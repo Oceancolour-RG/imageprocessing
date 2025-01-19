@@ -189,7 +189,7 @@ class Capture(object):
         Parameters
         ----------
         yaml_file : Path or str
-            The yaml file
+            The micasense acquistion yaml file
         base_path : Optional[Path or str]
             The Base path of the relative filenames given in the yaml file.
             If None, then the base_path provided in the yaml file will be used.
@@ -201,11 +201,10 @@ class Capture(object):
         d = load_yaml(yaml_file=yaml_file)
         if base_path is None:
             base_path = Path(d["base_path"])
-        else:  # Path or str
-            if isinstance(base_path, (str, Path)):
-                base_path = Path(base_path)
-            else:
-                raise ValueError("`base_path` must be None, str or Path")
+        elif isinstance(base_path, (str, Path)):
+            base_path = Path(base_path)
+        else:
+            raise ValueError("`base_path` must be None, str or Path")
 
         if not base_path.exists():
             raise FileNotFoundError(f"'{base_path}' does not exist")
@@ -219,6 +218,96 @@ class Capture(object):
         ]
 
         return cls(images)
+
+    @classmethod
+    def from_yaml_special(
+        cls,
+        yaml_file: Union[Path, str],
+        base_path: Optional[Union[Path, str]] = None,
+        vig_yaml: Optional[Path] = None,
+    ):
+        """
+        Create Capture object from a yaml file containing the
+        relevant metadata for each band.
+
+        Parameters
+        ----------
+        yaml_file : Path or str
+            The micasense acquisition yaml file
+        base_path : Optional[Path or str]
+            The Base path of the relative filenames given in the yaml file.
+            If None, then the base_path provided in the yaml file will be used.
+        vig_yaml : Optional[Path]
+            The yaml file containing paths to the vignetting image (.npy)
+            binary files for each band specified in `yaml_file`. If not specified,
+            then the default vignetting model is used.
+
+        Returns
+        -------
+        Capture object.
+        """
+
+        def get_bandnum(tif: Path) -> int:
+            """Return the band number from the filename"""
+            return int(tif.stem.split("_")[-1])
+
+        def load_vig_image(vig_params: dict, band_num: int) -> Union[None, np.ndarray]:
+            # Note: vig_params could be an empty dict, {}, in which case return None
+            out = None
+            if vig_params:
+                if band_num not in vig_params:
+                    raise KeyError(
+                        f"'{band_num}' is not a key in 'vig_params'\n"
+                        f"vig_params: {vig_params}"
+                    )
+                if "vig_model_npy" not in vig_params[band_num]:
+                    raise KeyError(
+                        f"'vig_model_npy' not in `vig_params[{band_num}]`\n"
+                        f"{vig_params[band_num]}"
+                    )
+
+                # check that vignetting image file exists
+                vig_model_path = Path(vig_params[band_num]["vig_model_npy"])
+                if not vig_model_path.exists():
+                    raise FileNotFoundError(f"File '{vig_model_path}' not found.")
+
+                # Attempt to load npy; raise Exception if fails to load.
+                try:
+                    out = np.load(vig_model_path)
+                except Exception as e:
+                    raise IOError(f"Error loading file '{vig_model_path}': {e}")
+
+            return out
+
+        # ------------------------------- #
+        d = load_yaml(yaml_file=yaml_file)
+        if base_path is None:
+            base_path = Path(d["base_path"])
+        elif isinstance(base_path, (str, Path)):
+            base_path = Path(base_path)
+        else:
+            raise ValueError("`base_path` must be None, str or Path")
+
+        if not base_path.exists():
+            raise FileNotFoundError(f"'{base_path}' does not exist")
+
+        vig_params = load_yaml(vig_yaml) if vig_yaml else {}
+
+        images = []
+        for k in d["image_data"]:
+            image_fn = base_path / d["image_data"][k]["filename"]
+            bn = get_bandnum(image_fn)
+
+            kw = {
+                "image_path": image_fn,
+                "metadata_dict": d,
+                "dark_current": None,
+                "vig_params": None,
+                "vig_image": load_vig_image(vig_params=vig_params, band_num=bn),
+            }
+            images.append(Image(**kw))
+
+        return cls(images=images)
 
     def __get_reference_index(self):
         """

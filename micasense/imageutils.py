@@ -426,9 +426,12 @@ def refine_alignment_warp(
     multithreaded: bool = True,
     debug: bool = False,
     pyramid_levels: Optional[int] = None,
+    apply_vig: bool = True,
 ) -> Tuple[List[np.ndarray], List[dict]]:
     """
-    Extract the alignment warp matrices and alignment pairs in capture using openCV
+    Extract the alignment warp matrices and alignment pairs in capture
+    using openCV. Here the alignment is performed using the undistorted
+    radiances.
 
     Parameters
     ----------
@@ -462,11 +465,14 @@ def refine_alignment_warp(
         Debug mode
     pyramid_levels : int or None [default = None]
         Pyramid level
+    apply_vig : bool
+        Whether to perform vignettig (True) or not (False) when creating the
+        undistorted radiances
     """
     # Match other bands to this reference image (index into ms_capture.images[])
     ref_img = (
         ms_capture.images[ref_index]
-        .undistorted(ms_capture.images[ref_index].radiance())
+        .undistorted(ms_capture.images[ref_index].radiance(apply_vig=apply_vig))
         .astype("float32")
     )
 
@@ -491,7 +497,9 @@ def refine_alignment_warp(
                     "ref_index": ref_index,
                     "ref_image": ref_img,
                     "match_index": i,
-                    "match_image": img.undistorted(img.radiance()).astype("float32"),
+                    "match_image": img.undistorted(
+                        img.radiance(apply_vig=apply_vig)
+                    ).astype("float32"),
                     "translations": translations,
                     "warp_matrix_init": np.array(warp_matrices_init[i], dtype="float32"),
                     "debug": debug,
@@ -526,6 +534,8 @@ def refine_alignment_warp(
 
     if ms_capture.images[-1].band_name == "LWIR":
         img = ms_capture.images[-1]
+        # Note that vignetting is not applied of the LWIR band
+        # see image.Image.radiance()
         alignment_pairs.append(
             {
                 "warp_mode": warp_mode,
@@ -560,13 +570,14 @@ def warp_matrices_wrapper(
     max_align_iter: int,
     warp_mode: int,
     pyramid_levels: int,
-    vig_md: Optional[dict] = None,
+    apply_vig: bool = True,
     base_path: Optional[Path] = None,
+    vig_yaml: Optional[Path] = None,
 ) -> List[np.ndarray]:
     """wrapper to create/save or load the warp matrices"""
     if not warp_npy_file.exists():
-        wrp_capture = Capture.from_yaml(
-            yaml_file=uav_yaml_file, vig_md=vig_md, base_path=base_path
+        wrp_capture = Capture.from_yaml_special(
+            yaml_file=uav_yaml_file, base_path=base_path, vig_yaml=vig_yaml
         )
         warp_matrices, _ = refine_alignment_warp(
             ms_capture=wrp_capture,
@@ -574,6 +585,7 @@ def warp_matrices_wrapper(
             max_iterations=max_align_iter,
             warp_mode=warp_mode,
             pyramid_levels=pyramid_levels,
+            apply_vig=apply_vig,
         )
         np.save(warp_npy_file, np.array(warp_matrices, order="C", dtype="float64"))
 
@@ -595,6 +607,7 @@ def aligned_capture_backend(
     irradiance: Optional[List[float]] = None,
     vc_g: Optional[List[float]] = None,
     which_dc: str = "dark",
+    apply_vig: bool = True,
 ) -> np.ndarray:
     """
 
@@ -633,12 +646,15 @@ def aligned_capture_backend(
         mably from increases in temperature.
        `user_defined` temperature invariant value acquired through a dark
         current assessment
+    apply_vig : bool
+        Whether to perform vignettig (True) or not (False) when creating the
+        undistorted radiances/reflectances
     """
     width, height = ms_capture.images[0].size()
 
     im_aligned = np.zeros((height, width, len(warp_matrices)), dtype="float32")
 
-    rkw = {"which_dc": which_dc, "force_recompute": True}
+    rkw = {"which_dc": which_dc, "force_recompute": True, "apply_vig": apply_vig}
     for i in range(0, len(warp_matrices)):
         rkw.update({"vc_g": 1 if vc_g is None else vc_g[i]})  # vicarious gains
 
@@ -650,7 +666,9 @@ def aligned_capture_backend(
             else:
                 ed = irradiance[i]
 
-            img = ms_capture.images[i].undistorted_reflectance(irradiance=ed, **rkw)
+            img = ms_capture.images[i].undistorted_reflectance(
+                irradiance=ed, return_rrs=False, **rkw
+            )
 
         else:  # radiance
             img = ms_capture.images[i].undistorted_radiance(**rkw)
@@ -695,6 +713,7 @@ def aligned_capture(
     irradiance: Optional[List[float]] = None,
     vc_g: Optional[List[float]] = None,
     which_dc: str = "dark",
+    apply_vig: bool = True,
 ) -> np.ndarray:
     """
     Creates aligned Capture. Computes undistorted radiance
@@ -733,6 +752,9 @@ def aligned_capture(
         mably from increases in temperature.
        `user_defined` temperature invariant value acquired through a dark
         current assessment
+    apply_vig : bool
+        Whether to perform vignettig (True) or not (False) when creating the
+        undistorted radiances/reflectances
 
     Returns
     -------
@@ -765,6 +787,7 @@ def aligned_capture(
         irradiance=irradiance,
         vc_g=vc_g,
         which_dc=which_dc,
+        apply_vig=apply_vig,
     )
 
     return im_aligned
